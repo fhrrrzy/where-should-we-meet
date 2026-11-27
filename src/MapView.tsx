@@ -25,6 +25,8 @@ export default function MapView(props: Props) {
   latest.current = props;
   const draw = useRef(() => {});
   const fit = () => {
+    const mobile = window.innerWidth <= 760;
+    const done = !!latest.current.result && !latest.current.running;
     if (map.current)
       map.current.fitBounds(
         L.latLngBounds(
@@ -32,7 +34,12 @@ export default function MapView(props: Props) {
             (f) => [f.place.lat, f.place.lng] as [number, number],
           ),
         ),
-        { padding: [85, 90], maxZoom: 13, animate: false },
+        {
+          paddingTopLeft: mobile ? [45, done ? 255 : 100] : [375, 100],
+          paddingBottomRight: mobile ? [45, 170] : [done ? 345 : 80, 80],
+          maxZoom: 13,
+          animate: false,
+        },
       );
   };
   useEffect(() => {
@@ -242,6 +249,9 @@ export default function MapView(props: Props) {
     };
   }, []);
   useEffect(() => {
+    if (props.result && !props.running) fit();
+  }, [props.result, props.running]);
+  useEffect(() => {
     draw.current();
   }, [
     props.network,
@@ -294,7 +304,7 @@ export default function MapView(props: Props) {
         zIndexOffset: 1000,
         icon: L.divIcon({
           className: "meeting-pin",
-          html: '<span class="meeting-label">YOUR COMMON GROUND</span><span class="meeting-icon">✳</span>',
+          html: '<span class="meeting-label">MEET HERE</span><span class="meeting-icon">✳</span>',
           iconSize: [46, 70],
           iconAnchor: [23, 58],
         }),
@@ -308,10 +318,6 @@ export default function MapView(props: Props) {
         className="leaflet-map"
         aria-label="Interactive Jakarta map. Drag friend markers to change starting points."
       />
-      <div className="map-city">
-        <span className="live-dot" /> Jakarta, Indonesia
-        <span className="city-detail">A little closer to everyone.</span>
-      </div>
       <div className="map-controls">
         <button onClick={() => map.current?.zoomIn()} aria-label="Zoom in">
           <Plus size={18} />
@@ -327,15 +333,6 @@ export default function MapView(props: Props) {
           <LocateFixed size={18} />
         </button>
       </div>
-      <div className="map-key">
-        {props.friends.map((f, i) => (
-          <span key={f.id}>
-            <i style={{ background: colors[i] }} />
-            {f.name || `Friend ${i + 1}`}
-          </span>
-        ))}
-      </div>
-      <div className="map-scale">Real streets. Real common ground.</div>
     </div>
   );
 }

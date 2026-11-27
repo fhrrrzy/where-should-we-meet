@@ -67,6 +67,7 @@ export default function App() {
     [help, setHelp] = useState(false),
     [notice, setNotice] = useState(""),
     [copied, setCopied] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth > 760);
   const worker = useRef<Worker | null>(null),
     timer = useRef<number>(0),
     nextId = useRef(10),
@@ -109,7 +110,7 @@ export default function App() {
   }
   function moveFriend(id: number, lat: number, lng: number) {
     if (lat < -6.36 || lat > -6.1 || lng < 106.72 || lng > 106.97) {
-      setNotice("Keep your starting point inside our Jakarta coverage.");
+      setNotice("Choose a point within Jakarta.");
       setFriends((f) => [...f]);
       return;
     }
@@ -132,15 +133,7 @@ export default function App() {
     if (!network) return;
     setActive(null);
     setNotice("");
-    if (window.innerWidth <= 760)
-      document
-        .querySelector(".map-column")
-        ?.scrollIntoView({
-          behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
-            ? "instant"
-            : "smooth",
-          block: "start",
-        });
+    if (window.innerWidth <= 760) setPanelOpen(false);
     const animate = (r: SearchResult) => {
       setResult(r);
       setComputing(false);
@@ -262,7 +255,7 @@ export default function App() {
             onClick={() => setHelp(true)}
           >
             <CircleHelp size={16} />
-            How it works
+            Help
           </button>
           <span className="nav-divider" />
           <button
@@ -271,56 +264,30 @@ export default function App() {
             aria-label={copied ? "Group link copied" : "Share your group"}
           >
             {copied ? <Check size={15} /> : <Share2 size={15} />}
-            <span>{copied ? "Link copied" : "Share your group"}</span>
+            <span>{copied ? "Copied" : "Share"}</span>
           </button>
         </nav>
       </header>
       <main>
-        <section className="intro">
-          <div>
-            <div className="eyebrow">
-              <span />
-              GOOD FRIENDS. FAIR JOURNEYS.
-            </div>
-            <h1>
-              Different starts. <span>One common ground.</span>
-            </h1>
-            <p>
-              Find a place that’s a little closer to everyone. Not just someone.
-            </p>
-          </div>
-          <div className="intro-note">
-            <div className="mini-avatars">
-              {["B", "P", "D", "S"].map((x, i) => (
-                <span key={x} style={{ color: colors[i] }}>
-                  {x}
-                </span>
-              ))}
-              <ArrowRight size={17} />
-              <span className="mini-meeting">✳</span>
-            </div>
-            <span>
-              Less “where should we go?”
-              <br />
-              <strong>More “see you there.”</strong>
-            </span>
-          </div>
-        </section>
         <section className="workspace" aria-label="Plan your meetup">
-          <aside className="sidebar">
+          <aside className={`sidebar ${panelOpen ? "" : "collapsed"}`} aria-label="Friends and search">
             <div className="sidebar-title">
-              <div>
-                <span className="step-number">01</span>
-                <h2>Where’s everyone?</h2>
-              </div>
+              <h1>Friends</h1>
               <span className="friend-count">
                 <Users size={13} />
                 {friends.length} friends
               </span>
+              <button
+                className="panel-toggle icon-button"
+                aria-label={panelOpen ? "Collapse controls" : "Edit friends and search"}
+                aria-expanded={panelOpen}
+                aria-controls="planner-controls"
+                onClick={() => { setPanelOpen(!panelOpen); setActive(null); }}
+              >
+                <ChevronDown size={18} />
+              </button>
             </div>
-            <p className="section-description">
-              Add your starting points. We’ll find the sweet spot.
-            </p>
+            <div className="panel-content" id="planner-controls" hidden={!panelOpen}>
             <div className="friend-list">
               {friends.map((f, i) => (
                 <div
@@ -399,17 +366,13 @@ export default function App() {
                 }}
               >
                 <Plus size={15} />
-                Add a friend
+                Add friend
               </button>
             )}
-            <div className="map-tip">
-              <Crosshair size={14} />
-              <span>You can drag the pins on the map, too.</span>
-            </div>
             {active !== null && (
               <div className="place-picker">
                 <div className="picker-heading">
-                  <strong>Choose a starting point</strong>
+                  <strong>Starting point</strong>
                   <button
                     className="icon-button"
                     aria-label="Close location search"
@@ -421,7 +384,7 @@ export default function App() {
                 <input
                   autoFocus
                   className="place-search"
-                  placeholder="Search Jakarta neighborhoods…"
+                  placeholder="Search Jakarta…"
                   aria-label="Search Jakarta neighborhoods"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -453,24 +416,19 @@ export default function App() {
                     p.name.toLowerCase().includes(query.toLowerCase()),
                   ) && (
                     <p>
-                      No saved place found. Click the map to drop a precise pin
-                      instead.
+                      No match. Place a pin on the map.
                     </p>
                   )}
                 </div>
-                <div className="picker-footer">
+                <button className="picker-footer" onClick={() => setPanelOpen(false)}>
                   <Crosshair size={13} />
-                  Or click anywhere on the map to place the pin.
-                </div>
+                  Place on map
+                </button>
               </div>
             )}
             <div className="search-options">
-              <div className="section-label">
-                <span className="step-number">02</span>
-                <h2>Make it fair</h2>
-              </div>
               <label className="objective-label" htmlFor="objective">
-                Choose what matters most
+                Optimize
               </label>
               <div className="select-wrap">
                 <select
@@ -482,13 +440,13 @@ export default function App() {
                     setObjective(e.target.value as "balanced" | "total");
                   }}
                 >
-                  <option value="balanced">Balance everyone’s distance</option>
-                  <option value="total">Shortest total group distance</option>
+                  <option value="balanced">Shortest longest trip</option>
+                  <option value="total">Shortest total distance</option>
                 </select>
                 <ChevronDown size={14} />
               </div>
               <div className="method-label">
-                WATCH THE SEARCH{" "}
+                Animation{" "}
                 <button
                   className="icon-button"
                   aria-label="About the search animation"
@@ -517,11 +475,7 @@ export default function App() {
                   One by one
                 </button>
               </div>
-              <p className="method-description">
-                {method === "together"
-                  ? "Everyone sets off together. Watch their paths meet."
-                  : "One friend at a time. Same fair destination."}
-              </p>
+            </div>
             </div>
             <div className="sidebar-bottom">
               <button
@@ -532,16 +486,12 @@ export default function App() {
                 {busy ? (
                   <>
                     <span className="spinner" />
-                    {computing
-                      ? "Finding common ground…"
-                      : "Following the streets…"}
+                    Searching…
                   </>
                 ) : (
                   <>
                     <Sparkles size={17} />
-                    {done
-                      ? "Find a new meeting point"
-                      : "Find our meeting point"}
+                    Find meeting point
                     <ArrowRight size={17} />
                   </>
                 )}
@@ -557,7 +507,7 @@ export default function App() {
                 }}
               >
                 <RotateCcw size={12} />
-                Reset to the Jakarta example
+                Reset
               </button>
             </div>
           </aside>
@@ -585,28 +535,15 @@ export default function App() {
                 ) : (
                   <>
                     <span className="spinner" />
-                    Unfolding Jakarta’s streets…
+                    Loading map…
                   </>
                 )}
-              </div>
-            )}
-            {!result && network && !computing && active === null && (
-              <div className="map-invitation">
-                <div className="invitation-icon">
-                  <GitFork size={19} />
-                </div>
-                <div>
-                  <strong>Four corners. One catch-up.</strong>
-                  <span>Your next good plan starts here.</span>
-                </div>
-                <ArrowUpRight size={17} />
               </div>
             )}
             {active !== null && (
               <div className="map-pick-message">
                 <Crosshair size={15} />
-                Click the map to set{" "}
-                {friends.find((f) => f.id === active)?.name}’s starting point
+                Place {friends.find((f) => f.id === active)?.name}’s pin
                 <button
                   aria-label="Cancel placing pin"
                   onClick={() => setActive(null)}
@@ -621,10 +558,10 @@ export default function App() {
                 <div>
                   <strong>
                     {computing
-                      ? "Finding the fairest street…"
+                      ? "Searching…"
                       : method === "together"
-                        ? "Finding where your worlds meet…"
-                        : `Following ${friends[Math.min(friends.length - 1, Math.floor(progress * friends.length))].name}’s streets…`}
+                        ? "Searching…"
+                        : `Searching: ${friends[Math.min(friends.length - 1, Math.floor(progress * friends.length))].name}`}
                   </strong>
                   <span>
                     {result
@@ -653,7 +590,7 @@ export default function App() {
                   <span className="result-check">
                     <Check size={11} />
                   </span>
-                  COMMON GROUND FOUND
+                  Meeting point
                   <button
                     onClick={() => start(true)}
                     title="Replay the search"
@@ -663,14 +600,8 @@ export default function App() {
                   </button>
                 </div>
                 <h2>
-                  Meet near {nearby.name}
-                  <span>↗</span>
+                  Near {nearby.name}
                 </h2>
-                <p>
-                  {objective === "balanced"
-                    ? "A shorter longest journey. A fairer catch-up."
-                    : "The least distance for your whole group."}
-                </p>
                 <div className="result-stats">
                   <div>
                     <strong>
@@ -688,10 +619,6 @@ export default function App() {
                     </strong>
                     <span>average trip</span>
                   </div>
-                  <div>
-                    <strong>{friends.length}</strong>
-                    <span>happy friends</span>
-                  </div>
                 </div>
                 <a
                   className="maps-link"
@@ -700,7 +627,7 @@ export default function App() {
                   rel="noreferrer"
                 >
                   <Navigation size={14} />
-                  Explore this spot in Maps
+                  Open in Maps
                   <ArrowUpRight size={15} />
                 </a>
                 <button
@@ -719,19 +646,6 @@ export default function App() {
             )}
           </div>
         </section>
-        <footer className="site-footer">
-          <span>
-            <i />
-            Made for the plans that actually leave the group chat.
-          </span>
-          <span>
-            Jakarta edition <span className="footer-dot">·</span> Street
-            distance, not travel time{" "}
-            <button onClick={() => setHelp(true)} aria-label="Distance details">
-              <CircleHelp size={12} />
-            </button>
-          </span>
-        </footer>
       </main>
       {notice && (
         <div className="toast" role="alert">
@@ -758,33 +672,24 @@ export default function App() {
         >
           <X size={20} />
         </button>
-        <span className="eyebrow">A FAIRER WAY TO CATCH UP</span>
-        <h2>
-          Not the middle.
-          <br />
-          The common ground.
-        </h2>
-        <p>
-          A midpoint on a map can leave one friend with a much longer journey.
-          We follow Jakarta’s actual streets instead.
-        </p>
+        <h2>How it works</h2>
         <ol>
           <li>
-            <strong>Start with your people.</strong>
+            <strong>Add 2–6 friends.</strong>
             <span>
               Choose 2–6 starting points from saved Jakarta places, drag a pin,
               or click the map.
             </span>
           </li>
           <li>
-            <strong>Choose your kind of fair.</strong>
+            <strong>Choose an objective.</strong>
             <span>
               Balanced trips minimizes the longest street distance. Shortest
               total minimizes the distance everyone travels combined.
             </span>
           </li>
           <li>
-            <strong>Watch your paths come together.</strong>
+            <strong>Find a meeting point.</strong>
             <span>
               Colored waves follow shortest street distances from each friend.
               Both animation modes find the same point.
@@ -808,7 +713,7 @@ export default function App() {
           </p>
         </div>
         <button className="find-button" onClick={() => setHelp(false)}>
-          Let’s find our spot
+          Done
           <ArrowRight size={16} />
         </button>
       </dialog>
