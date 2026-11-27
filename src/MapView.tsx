@@ -286,7 +286,9 @@ export default function MapView(props: Props) {
     if (!layer) return;
     layer.clearLayers();
     const m = map.current!;
+    let pinZoom = m.getZoom();
     const renderPins = () => {
+      pinZoom = m.getZoom();
       layer.clearLayers();
       props.friends.forEach((f) => {
         const original = L.latLng(f.place.lat, f.place.lng);
@@ -382,9 +384,12 @@ export default function MapView(props: Props) {
       });
     };
     renderPins();
-    m.on("zoomend", renderPins);
+    const onSettled = () => {
+      if (m.getZoom() !== pinZoom) renderPins();
+    };
+    m.on("zoomend moveend", onSettled);
     return () => {
-      m.off("zoomend", renderPins);
+      m.off("zoomend moveend", onSettled);
     };
   }, [props.friends, props.active, props.running, props.result, props.network]);
   useEffect(() => {
