@@ -39,6 +39,11 @@ export default function MapView(props: Props) {
       const size = map.current.getSize();
       const topLeft = mobile ? [45, done ? 255 : 100] : [375, 100];
       const bottomRight = mobile ? [45, 170] : [done ? 345 : 80, 80];
+      if (mobile && size.y <= 500) {
+        topLeft[1] = 95;
+        bottomRight[0] = done ? 320 : 45;
+        bottomRight[1] = 105;
+      }
       for (const [axis, available] of [size.x, size.y].map((s, i) => [
         i,
         Math.max(0, s - 100),
