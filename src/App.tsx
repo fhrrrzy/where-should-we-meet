@@ -584,7 +584,7 @@ export default function App() {
                 />
               </div>
             )}
-            {done && nearby && meeting && (
+            {done && nearby && meeting && active === null && (
               <div className="result-card" aria-live="polite">
                 <div className="result-eyebrow">
                   <span className="result-check">
