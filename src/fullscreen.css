@@ -461,6 +461,9 @@ select {
   min-width: 0;
 }
 @media (max-width: 760px) and (min-height: 501px) {
+  .workspace.sheet-full .map-controls {
+    display: none;
+  }
   .sidebar {
     height: auto;
     max-height: calc(100dvh - 72px);

@@ -575,7 +575,10 @@ export default function App() {
         </nav>
       </header>
       <main>
-        <section className="workspace" aria-label="Plan your meetup">
+        <section
+          className={`workspace${sheet === "full" ? " sheet-full" : ""}`}
+          aria-label="Plan your meetup"
+        >
           <aside
             className={`sidebar sheet-${sheet}${panelOpen ? "" : " collapsed"}`}
             aria-label="Friends and search"
