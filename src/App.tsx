@@ -94,6 +94,12 @@ export default function App() {
   const [highlightedOption, setHighlightedOption] = useState<number | null>(
     null,
   );
+  useEffect(() => {
+    if (highlightedOption === null) return;
+    document
+      .getElementById(`place-option-${highlightedOption}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlightedOption]);
   const shared = useRef(initial.shared),
     autoFind = useRef(initial.autoFind),
     skip = useRef(false);
