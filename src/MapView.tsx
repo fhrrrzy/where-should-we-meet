@@ -36,7 +36,10 @@ export default function MapView(props: Props) {
     locationLayer = useRef<L.LayerGroup | null>(null),
     latest = useRef(props);
   latest.current = props;
-  const draw = useRef(() => {});
+  const draw = useRef<{
+    draw: () => void;
+    transform: (center: L.LatLng, zoom: number) => void;
+  }>({ draw: () => {}, transform: () => {} });
   const fit = () => {
     const mobile = window.innerWidth <= 760;
     const phonePortrait = mobile && window.innerHeight > 500;
@@ -103,6 +106,9 @@ export default function MapView(props: Props) {
     const m = L.map(root.current, {
       center: [-6.205, 106.827],
       zoom: 12,
+      zoomSnap: 0,
+      zoomDelta: 1,
+      wheelPxPerZoomLevel: 100,
       zoomControl: false,
       attributionControl: false,
       minZoom: 9,
@@ -160,8 +166,11 @@ export default function MapView(props: Props) {
           }),
         }).addTo(labels),
       );
-    draw.current = createStreetRenderer(m, c, () => latest.current);
-    m.on("moveend zoomend resize", () => draw.current());
+    const renderer = createStreetRenderer(m, c, () => latest.current);
+    draw.current = renderer;
+    m.on("moveend zoomend resize", () => renderer.draw());
+    m.on("zoomanim", (event) => renderer.transform(event.center, event.zoom));
+    m.on("zoom", () => renderer.transform(m.getCenter(), m.getZoom()));
     m.on("click", (e: L.LeafletMouseEvent) => {
       if (latest.current.active !== null)
         latest.current.onPick(e.latlng.lat, e.latlng.lng);
@@ -214,7 +223,7 @@ export default function MapView(props: Props) {
     });
     const resize = new ResizeObserver(() => {
       m.invalidateSize();
-      draw.current();
+      draw.current.draw();
     });
     resize.observe(root.current);
     fit();
@@ -228,7 +237,7 @@ export default function MapView(props: Props) {
     if (props.result && !props.running) fit();
   }, [props.result, props.running]);
   useEffect(() => {
-    draw.current();
+    draw.current.draw();
   }, [
     props.network,
     props.result,
