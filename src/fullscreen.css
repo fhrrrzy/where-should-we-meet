@@ -72,6 +72,7 @@ main { max-width: none; margin: 0; padding: 0; }
   backdrop-filter: blur(14px);
   z-index: 800;
   overscroll-behavior: contain;
+  overflow: auto;
 }
 .sidebar-title { gap: 8px; flex-shrink: 0; }
 .sidebar-title h1 {
