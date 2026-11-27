@@ -280,7 +280,8 @@ export default function App() {
         ),
       },
     ]);
-    if (select) setActive(id);
+    if (!select) return;
+    setActive(id);
     setQuery("");
     setHighlightedOption(null);
   }
