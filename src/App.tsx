@@ -256,7 +256,10 @@ export default function App() {
     setActive(null);
     focusLocation(id);
   }
-  function addFriend(place: Place = places[4]) {
+  function addFriend(
+    place: Place = places[4],
+    { select = true }: { select?: boolean } = {},
+  ) {
     clearResult();
     const id = nextId.current++;
     setFriends((fs) => [
@@ -271,7 +274,7 @@ export default function App() {
         ),
       },
     ]);
-    setActive(id);
+    if (select) setActive(id);
     setQuery("");
     setHighlightedOption(null);
   }
@@ -279,7 +282,10 @@ export default function App() {
     if (friends.length >= 6) return;
     const closest = validatedClosest(lat, lng);
     if (!closest) return;
-    addFriend({ name: `Pin near ${closest.name}`, lat, lng });
+    addFriend(
+      { name: `Pin near ${closest.name}`, lat, lng },
+      { select: false },
+    );
   }
   function focusLocation(id: number) {
     requestAnimationFrame(() =>
