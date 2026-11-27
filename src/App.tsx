@@ -9,6 +9,7 @@ import {
   Copy,
   Crosshair,
   GitFork,
+  House,
   MapPin,
   Navigation,
   Plus,
@@ -363,6 +364,14 @@ export default function App() {
           meet halfway<span className="brand-period">.</span>
         </a>
         <nav>
+          <a
+            className="home-nav"
+            href={import.meta.env.BASE_URL}
+            aria-label="Your saved plan"
+            title="Your saved plan"
+          >
+            <House size={16} />
+          </a>
           <button
             className="text-button help-nav"
             onClick={() => setHelp(true)}

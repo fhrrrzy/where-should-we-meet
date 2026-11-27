@@ -48,6 +48,9 @@ body,
   font-size: 12px;
   padding: 8px;
 }
+.home-nav {
+  display: none;
+}
 .nav-divider {
   display: none;
 }
@@ -434,5 +437,13 @@ select {
   }
   .site-header {
     justify-content: flex-end;
+  }
+  .home-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    color: #dde4df;
   }
 }
