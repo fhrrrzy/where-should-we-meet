@@ -5,6 +5,7 @@ import {
   friendLabel,
   friendInitial,
   friendColor,
+  sameLocation,
   places,
   type Friend,
 } from "./places";
@@ -177,7 +178,7 @@ export default function MapView(props: Props) {
           props.network &&
           m
             .latLngToContainerPoint(
-              props.result.maxDistance < 0.001
+              sameLocation(props.friends)
                 ? [props.friends[0].place.lat, props.friends[0].place.lng]
                 : L.latLng(
                     props.network.nodes[props.result.meeting][0],
@@ -266,10 +267,9 @@ export default function MapView(props: Props) {
     if (!layer) return;
     layer.clearLayers();
     if (props.result && !props.running && props.network) {
-      const p =
-        props.result.maxDistance < 0.001
-          ? [props.friends[0].place.lat, props.friends[0].place.lng]
-          : props.network.nodes[props.result.meeting];
+      const p = sameLocation(props.friends)
+        ? [props.friends[0].place.lat, props.friends[0].place.lng]
+        : props.network.nodes[props.result.meeting];
       L.marker([p[0], p[1]], {
         keyboard: false,
         interactive: false,

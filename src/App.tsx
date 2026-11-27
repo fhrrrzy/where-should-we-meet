@@ -27,6 +27,7 @@ import {
   friendInitial,
   friendColor,
   friendColorIndex,
+  sameLocation,
   type Friend,
   type Place,
 } from "./places";
@@ -305,7 +306,7 @@ export default function App() {
       );
   }
   const done = !!result && !running && !computing;
-  const together = !!result && result.maxDistance < 0.001;
+  const together = !!result && sameLocation(friends);
   const meeting =
     result && network
       ? together
@@ -791,7 +792,11 @@ export default function App() {
                 <div className="result-stats">
                   <div>
                     <strong>
-                      {together ? "0" : Math.max(...result.trips).toFixed(1)}
+                      {together
+                        ? "0"
+                        : Math.max(...result.trips) < 0.05
+                          ? "<0.1"
+                          : Math.max(...result.trips).toFixed(1)}
                       <small> km</small>
                     </strong>
                     <span>
@@ -800,7 +805,11 @@ export default function App() {
                   </div>
                   <div>
                     <strong>
-                      {result.trips.reduce((a, b) => a + b, 0).toFixed(1)}
+                      {together
+                        ? "0"
+                        : result.trips.reduce((a, b) => a + b, 0) < 0.05
+                          ? "<0.1"
+                          : result.trips.reduce((a, b) => a + b, 0).toFixed(1)}
                       <small> km</small>
                     </strong>
                     <span>total distance</span>

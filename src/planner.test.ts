@@ -1,7 +1,12 @@
 import { it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { initialFriends, friendColor, friendLabel } from "./places.ts";
+import {
+  initialFriends,
+  friendColor,
+  friendLabel,
+  sameLocation,
+} from "./places.ts";
 import {
   readPlanner,
   plannerUrl,
@@ -49,6 +54,15 @@ it("rejects malformed, undersized and out-of-coverage shared groups", () => {
     assert.equal(restored.shared, false);
     assert.equal(restored.autoFind, false);
   }
+});
+it("only reports friends together when their actual coordinates match", () => {
+  const friends = initialFriends();
+  friends.forEach((f) => {
+    f.place = { ...friends[0].place };
+  });
+  assert.equal(sameLocation(friends), true);
+  friends[1].place.lng += 0.0001;
+  assert.equal(sameLocation(friends), false);
 });
 it("preserves the saved group when a broken invitation is opened", () => {
   const friends = initialFriends();

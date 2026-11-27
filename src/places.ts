@@ -62,6 +62,12 @@ export const colors = [
   "#ba91ff",
 ];
 export type Friend = { id: number; name: string; place: Place; color?: number };
+export const sameLocation = (friends: Friend[]) =>
+  friends.every(
+    (f) =>
+      f.place.lat === friends[0].place.lat &&
+      f.place.lng === friends[0].place.lng,
+  );
 export const friendLabel = (f: Friend) => f.name.trim() || `Friend ${f.id + 1}`;
 export const friendColorIndex = (f: Friend) => f.color ?? f.id % colors.length;
 export const friendColor = (f: Friend) => colors[friendColorIndex(f)];
