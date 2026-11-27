@@ -82,6 +82,14 @@ export default function App() {
   const shared = useRef(initial.shared),
     autoFind = useRef(initial.autoFind),
     skip = useRef(false);
+  const initialPlan = useRef(
+    JSON.stringify({
+      friends: initial.friends,
+      objective: initial.objective,
+      method: initial.method,
+    }),
+  );
+  const savePlan = useRef(!initial.shared);
   const worker = useRef<Worker | null>(null),
     timer = useRef<number>(0),
     nextId = useRef(Math.max(...initial.friends.map((f) => f.id)) + 1),
@@ -91,8 +99,10 @@ export default function App() {
   }, [initial.invalid]);
   useEffect(() => {
     const planner = { friends, objective, method };
+    const serialized = JSON.stringify(planner);
+    if (serialized !== initialPlan.current) savePlan.current = true;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(planner));
+      if (savePlan.current) localStorage.setItem(STORAGE_KEY, serialized);
     } catch {
       /* URL sharing still works. */
     }

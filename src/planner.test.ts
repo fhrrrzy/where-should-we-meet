@@ -50,6 +50,16 @@ it("rejects malformed, undersized and out-of-coverage shared groups", () => {
     assert.equal(restored.autoFind, false);
   }
 });
+it("preserves the saved group when a broken invitation is opened", () => {
+  const friends = initialFriends();
+  friends[0].name = "My saved group";
+  const saved = { friends, objective: "total", method: "sequential" };
+  const restored = readPlanner("?group=broken", JSON.stringify(saved));
+  assert.equal(restored.invalid, true);
+  assert.equal(restored.friends[0].name, "My saved group");
+  assert.equal(restored.objective, "total");
+  assert.equal(restored.autoFind, false);
+});
 it("normalizes spaces, supports short names and small typos, and identifies unsupported cities", () => {
   for (const [query, name] of [
     [" GBK ", "Gelora Bung Karno"],

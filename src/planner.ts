@@ -54,7 +54,10 @@ function validGroup(raw: unknown): Friend[] | null {
     };
   });
 }
-export function readPlanner(search: string, stored: string | null) {
+export function readPlanner(
+  search: string,
+  stored: string | null,
+): Planner & { shared: boolean; invalid: boolean; autoFind: boolean } {
   const params = new URLSearchParams(search);
   const shared = params.has("group");
   let invalid = false;
@@ -90,6 +93,7 @@ export function readPlanner(search: string, stored: string | null) {
   } catch {
     invalid = shared;
   }
+  if (invalid) return { ...readPlanner("", stored), invalid: true };
   return {
     friends: initialFriends(),
     objective: "balanced" as Objective,
