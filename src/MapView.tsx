@@ -49,7 +49,10 @@ export default function MapView(props: Props) {
         ?.querySelector(".sidebar")
         ?.getBoundingClientRect();
       const bottomRight = mobile
-        ? [45, phonePortrait ? (sidebar?.height ?? 0) + 24 : 170]
+        ? [
+            phonePortrait ? 72 : 45,
+            phonePortrait ? (sidebar?.height ?? 0) + 24 : 170,
+          ]
         : [done ? 345 : 80, 80];
       if (mobile && size.y <= 500) {
         topLeft[1] = 95;
@@ -364,9 +367,10 @@ export default function MapView(props: Props) {
     try {
       const position = await locate();
       const layer = locationLayer.current;
-      if (!layer || !map.current) return;
+      const m = map.current;
+      if (!layer || !m) return;
       layer.clearLayers();
-      const point: L.LatLngExpression = [position.lat, position.lng];
+      const point = L.latLng(position.lat, position.lng);
       L.circle(point, {
         radius: position.accuracy,
         color: "#4285F4",
@@ -383,7 +387,32 @@ export default function MapView(props: Props) {
         weight: 2,
         interactive: false,
       }).addTo(layer);
-      map.current.flyTo(point, 15);
+      const workspace = root.current?.closest(".workspace");
+      const sidebar = workspace?.querySelector<HTMLElement>(".sidebar");
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      const mapRect = root.current?.getBoundingClientRect();
+      const phonePortrait =
+        window.innerWidth <= 760 && window.innerHeight > 500;
+      let center = point;
+      if (phonePortrait) {
+        center = m.unproject(
+          m.project(point, 15).add([0, (sidebarRect?.height ?? 0) / 2]),
+          15,
+        );
+      } else if (
+        window.innerWidth > 760 &&
+        sidebar &&
+        !sidebar.classList.contains("collapsed") &&
+        sidebarRect &&
+        mapRect
+      ) {
+        const sidebarRight = sidebarRect.right - mapRect.left;
+        center = m.unproject(
+          m.project(point, 15).subtract([sidebarRight / 2, 0]),
+          15,
+        );
+      }
+      m.flyTo(center, 15);
       if (!insideCoverage(position.lat, position.lng))
         latest.current.onNotice("You’re outside Jakarta coverage.");
     } catch {

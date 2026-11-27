@@ -541,6 +541,9 @@ select {
     right: 12px;
     bottom: calc(var(--sheet-height, 0px) + 12px);
   }
+  .zoom-controls {
+    display: none;
+  }
   .toast {
     bottom: calc(var(--sheet-height, 0px) + 18px);
   }
