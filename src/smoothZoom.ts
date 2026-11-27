@@ -86,7 +86,8 @@ export function createSmoothZoom(map: L.Map): {
       target = clamp(target + delta, map.getMinZoom(), map.getMaxZoom());
       anchorPoint = around ?? map.getSize().divideBy(2);
       anchorLatLng = map.containerPointToLatLng(anchorPoint);
-      immediate = immediateZoom;
+      immediate =
+        immediateZoom || matchMedia("(prefers-reduced-motion: reduce)").matches;
       lastRequest = performance.now();
       if (!frameId) frameId = requestAnimationFrame(frame);
     },
