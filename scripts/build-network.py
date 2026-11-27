@@ -16,9 +16,9 @@ from shapely.geometry import LineString, box
 from shapely import union_all
 
 ROOT = Path(__file__).resolve().parents[1]
-ZOOM = 13
+ZOOM = 11
 EXTENT = 4096
-WEST, SOUTH, EAST, NORTH = 106.72, -6.36, 106.97, -6.10
+WEST, SOUTH, EAST, NORTH = 106.68, -6.38, 106.98, -6.08
 def tile(lng, lat):
     return ((lng + 180) / 360 * 2**ZOOM,
             (1-math.asinh(math.tan(math.radians(lat)))/math.pi)/2*2**ZOOM)
