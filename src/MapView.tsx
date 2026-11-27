@@ -27,7 +27,15 @@ export default function MapView(props: Props) {
   const fit = () => {
     const mobile = window.innerWidth <= 760;
     const done = !!latest.current.result && !latest.current.running;
-    if (map.current)
+    if (map.current) {
+      const size = map.current.getSize();
+      const topLeft = mobile ? [45, done ? 255 : 100] : [375, 100];
+      const bottomRight = mobile ? [45, 170] : [done ? 345 : 80, 80];
+      for (const [axis, available] of [size.x, size.y].map((s, i) => [i, Math.max(0, s - 100)])) {
+        const ratio = Math.min(1, available / (topLeft[axis] + bottomRight[axis]));
+        topLeft[axis] *= ratio;
+        bottomRight[axis] *= ratio;
+      }
       map.current.fitBounds(
         L.latLngBounds(
           latest.current.friends.map(
@@ -35,12 +43,13 @@ export default function MapView(props: Props) {
           ),
         ),
         {
-          paddingTopLeft: mobile ? [45, done ? 255 : 100] : [375, 100],
-          paddingBottomRight: mobile ? [45, 170] : [done ? 345 : 80, 80],
+          paddingTopLeft: L.point(topLeft[0], topLeft[1]),
+          paddingBottomRight: L.point(bottomRight[0], bottomRight[1]),
           maxZoom: 13,
           animate: false,
         },
       );
+    }
   };
   useEffect(() => {
     if (!root.current) return;
@@ -49,7 +58,7 @@ export default function MapView(props: Props) {
       zoom: 12,
       zoomControl: false,
       attributionControl: false,
-      minZoom: 11,
+      minZoom: 9,
       maxZoom: 16,
       maxBounds: [
         [-6.4, 106.67],

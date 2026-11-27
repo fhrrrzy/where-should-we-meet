@@ -195,3 +195,11 @@ select { height: 38px; font-size: 11px; }
   .toast { bottom: 160px; }
   .leaflet-control-attribution { font-size: 7px !important; }
 }
+@media (max-width: 760px) and (max-height: 500px) {
+  .sidebar.collapsed { flex-direction: row; align-items: center; gap: 14px; }
+  .collapsed .sidebar-title { flex: 1; }
+  .collapsed .sidebar-bottom { width: 220px; padding: 0; box-shadow: none; }
+  .result-card { width: 225px; }
+  .result-card h2 { font-size: 14px; margin-bottom: 9px; }
+  .result-stats { display: none; }
+}
