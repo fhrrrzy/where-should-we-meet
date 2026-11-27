@@ -41,7 +41,19 @@ export default function MapView(props: Props) {
       const bottomRight = mobile ? [45, 170] : [done ? 345 : 80, 80];
       if (mobile && size.y <= 500) {
         topLeft[1] = 95;
-        bottomRight[0] = done ? 320 : 45;
+        // Clustered markers can spread 64px past their true coordinates;
+        // reserve that plus the label/handle, not just the raw bounds.
+        const card = root.current?.parentElement
+          ?.querySelector(".result-card")
+          ?.getBoundingClientRect();
+        topLeft[0] = 90;
+        bottomRight[0] = done
+          ? (card
+              ? size.x -
+                card.left +
+                (root.current?.getBoundingClientRect().left ?? 0)
+              : 289) + 112
+          : 90;
         bottomRight[1] = 105;
       }
       for (const [axis, available] of [size.x, size.y].map((s, i) => [
