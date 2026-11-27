@@ -43,7 +43,7 @@ export default function MapView(props: Props) {
         topLeft[1] = 95;
         // Clustered markers can spread 64px past their true coordinates;
         // reserve that plus the label/handle, not just the raw bounds.
-        const card = root.current?.parentElement
+        const card = root.current?.closest(".map-column")
           ?.querySelector(".result-card")
           ?.getBoundingClientRect();
         topLeft[0] = 90;
