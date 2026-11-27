@@ -5,6 +5,7 @@ Usage: python scripts/build-network.py
 No map service or Python dependency is required to run the app.
 """
 import concurrent.futures
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -12,12 +13,9 @@ from pathlib import Path
 import mapbox_vector_tile
 import requests
 from shapely.geometry import LineString, box
-from shapely.ops import unary_union
 from shapely import union_all
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE = ROOT / '.tile-cache'
-CACHE.mkdir(exist_ok=True)
 ZOOM = 13
 EXTENT = 4096
 WEST, SOUTH, EAST, NORTH = 106.72, -6.36, 106.97, -6.10
@@ -27,6 +25,8 @@ def tile(lng, lat):
 left, top = tile(WEST, NORTH)
 right, bottom = tile(EAST, SOUTH)
 version = requests.get('https://tiles.openfreemap.org/planet', timeout=30).json()['tiles'][0]
+CACHE = ROOT / '.tile-cache' / hashlib.sha256(version.encode()).hexdigest()[:16]
+CACHE.mkdir(parents=True,exist_ok=True)
 tasks = [(x,y) for x in range(math.floor(left),math.floor(right)+1)
          for y in range(math.floor(top),math.floor(bottom)+1)]
 print(f'Downloading {len(tasks)} tiles for the fixed Jakarta coverage', flush=True)
