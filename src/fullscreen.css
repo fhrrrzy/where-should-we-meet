@@ -201,7 +201,8 @@ select {
 .place-options {
   flex: 1;
   min-height: 0;
-  max-height: none;
+  max-height: min(45dvh, 360px);
+  overflow: auto;
 }
 .picker-footer {
   flex-shrink: 0;
