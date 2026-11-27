@@ -427,3 +427,12 @@ select {
     display: none;
   }
 }
+/* Tiny landscape screens need the upper-left corner for draggable pins. */
+@media (max-width: 760px) and (max-height: 340px) {
+  .site-header .brand {
+    display: none;
+  }
+  .site-header {
+    justify-content: flex-end;
+  }
+}
