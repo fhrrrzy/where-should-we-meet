@@ -1302,6 +1302,9 @@ dialog li span {
   }
 }
 @media (max-width: 760px) {
+  html {
+    overflow-anchor: none;
+  }
   .site-header {
     height: 69px;
     padding: 0 21px;
