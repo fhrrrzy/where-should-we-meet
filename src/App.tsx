@@ -76,6 +76,8 @@ export default function App() {
       serial: 0,
     }),
     [copied, setCopied] = useState(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const notice = notification.message;
   function setNotice(message: string) {
     setNotification((n) => ({ message, serial: n.serial + 1 }));
@@ -292,12 +294,13 @@ export default function App() {
     if (id !== null) focusLocation(id);
   }
   async function chooseMyLocation() {
-    if (active === null) return;
+    const id = active;
+    if (id === null) return;
     try {
       const position = await locate();
-      moveFriend(active, position.lat, position.lng);
+      if (activeRef.current === id) moveFriend(id, position.lat, position.lng);
     } catch {
-      setNotice("Location unavailable.");
+      if (activeRef.current === id) setNotice("Location unavailable.");
     }
   }
   function chooseOption(index: number) {
