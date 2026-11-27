@@ -12,7 +12,15 @@ type Scene = {
 };
 
 const PADDING = 0.3;
-const MAX_CACHED_ZOOMS = 3;
+const REF_ZOOM = 16;
+
+type ProjectedShape = {
+  points: [number, number][];
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+};
 
 /** Paint each reached street once, rather than repainting the graph every frame. */
 export function createStreetRenderer(
@@ -22,20 +30,18 @@ export function createStreetRenderer(
 ) {
   const front = L.DomUtil.create(
     "canvas",
-    "street-canvas leaflet-zoom-animated",
+    "street-canvas",
     map.getPane("overlayPane")!,
   );
-  L.DomUtil.addClass(canvas, "leaflet-zoom-animated");
   const ctx = canvas.getContext("2d")!;
   const tip = front.getContext("2d")!;
   let viewKey = "",
     networkCache: Network | null = null,
-    projectedByZoom = new Map<number, number[][][]>();
-  let shapes: number[][][] = [],
+    canvasSizeKey = "";
+  let refOrigin = L.point(0, 0),
+    shapes: ProjectedShape[] = [],
     visible = new Set<number>();
-  let base = new Path2D(),
-    drawnCenter = map.getCenter(),
-    drawnZoom = map.getZoom();
+  let base = new Path2D();
   let resultCache: SearchResult | null = null;
   let methodCache = "",
     stageCache = -1,
@@ -45,7 +51,7 @@ export function createStreetRenderer(
     previousRadius = -1;
 
   const trace = (target: CanvasRenderingContext2D | Path2D, index: number) => {
-    shapes[index].forEach(([x, y], j) => {
+    shapes[index].points.forEach(([x, y], j) => {
       if (j === 0) target.moveTo(x, y);
       else target.lineTo(x, y);
     });
@@ -58,32 +64,32 @@ export function createStreetRenderer(
       width = size.x * (1 + 2 * PADDING),
       height = size.y * (1 + 2 * PADDING),
       ratio = Math.min(window.devicePixelRatio || 1, 2),
-      zoom = map.getZoom();
+      zoom = map.getZoom(),
+      scale = map.getZoomScale(zoom, REF_ZOOM);
     const networkChanged = networkCache !== network;
     if (networkChanged) {
-      projectedByZoom.clear();
       networkCache = network;
-    }
-    let projected = projectedByZoom.get(zoom);
-    if (projected) {
-      projectedByZoom.delete(zoom);
-      projectedByZoom.set(zoom, projected);
-    } else {
-      const project = ([lat, lng]: number[]) => {
-        const point = map.project([lat, lng], zoom);
-        return [point.x, point.y];
-      };
-      projected = (
+      const sourceShapes =
         network.shapes ??
-        network.edges.map(([u, v]) => [network.nodes[u], network.nodes[v]])
-      ).map((shape) => shape.map(project));
-      projectedByZoom.set(zoom, projected);
-      if (projectedByZoom.size > MAX_CACHED_ZOOMS) {
-        const oldestZoom = projectedByZoom.keys().next().value;
-        if (oldestZoom !== undefined) projectedByZoom.delete(oldestZoom);
-      }
+        network.edges.map(([u, v]) => [network.nodes[u], network.nodes[v]]);
+      const firstNode = network.nodes[0] ?? sourceShapes[0]?.[0] ?? [0, 0];
+      refOrigin = map.project(L.latLng(firstNode[0], firstNode[1]), REF_ZOOM);
+      shapes = sourceShapes.map((shape) => {
+        let minX = Infinity,
+          maxX = -Infinity,
+          minY = Infinity,
+          maxY = -Infinity;
+        const points = shape.map(([lat, lng]) => {
+          const point = map.project([lat, lng], REF_ZOOM).subtract(refOrigin);
+          minX = Math.min(minX, point.x);
+          maxX = Math.max(maxX, point.x);
+          minY = Math.min(minY, point.y);
+          maxY = Math.max(maxY, point.y);
+          return [point.x, point.y] as [number, number];
+        });
+        return { points, minX, maxX, minY, maxY };
+      });
     }
-    shapes = projected;
     const pixelOrigin = map.getPixelOrigin(),
       topLeft = map
         .containerPointToLayerPoint(size.multiplyBy(-PADDING))
@@ -91,46 +97,48 @@ export function createStreetRenderer(
       paddedBounds = map.getPixelBounds().pad(PADDING),
       boundsMin = paddedBounds.min!,
       boundsMax = paddedBounds.max!,
+      minX = boundsMin.x / scale - refOrigin.x,
+      maxX = boundsMax.x / scale - refOrigin.x,
+      minY = boundsMin.y / scale - refOrigin.y,
+      maxY = boundsMax.y / scale - refOrigin.y,
       key = `${zoom},${pixelOrigin.x},${pixelOrigin.y},${topLeft.x},${topLeft.y},${size.x},${size.y},${ratio}`;
     const viewChanged = key !== viewKey || networkChanged;
     if (viewChanged) {
-      for (const c of [canvas, front]) {
-        L.DomUtil.setPosition(c, topLeft);
-        c.width = Math.round(width * ratio);
-        c.height = Math.round(height * ratio);
-        c.style.width = `${width}px`;
-        c.style.height = `${height}px`;
+      const sizeKey = `${width},${height},${ratio}`;
+      if (canvasSizeKey !== sizeKey) {
+        for (const c of [canvas, front]) {
+          c.width = Math.round(width * ratio);
+          c.height = Math.round(height * ratio);
+          c.style.width = `${width}px`;
+          c.style.height = `${height}px`;
+        }
+        canvasSizeKey = sizeKey;
       }
+      for (const c of [canvas, front]) L.DomUtil.setPosition(c, topLeft);
       visible = new Set();
       base = new Path2D();
       shapes.forEach((shape, index) => {
-        let west = Infinity,
-          east = -Infinity,
-          north = Infinity,
-          south = -Infinity;
-        for (const [x, y] of shape) {
-          west = Math.min(west, x);
-          east = Math.max(east, x);
-          north = Math.min(north, y);
-          south = Math.max(south, y);
-        }
         if (
-          east < boundsMin.x ||
-          west > boundsMax.x ||
-          south < boundsMin.y ||
-          north > boundsMax.y
+          shape.maxX < minX ||
+          shape.minX > maxX ||
+          shape.maxY < minY ||
+          shape.minY > maxY
         )
           return;
         visible.add(index);
         trace(base, index);
       });
       viewKey = key;
-      drawnCenter = map.getCenter();
-      drawnZoom = zoom;
     }
     const worldOrigin = pixelOrigin.add(topLeft);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    tip.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const transform = [
+      ratio * scale,
+      0,
+      0,
+      ratio * scale,
+      ratio * (scale * refOrigin.x - worldOrigin.x),
+      ratio * (scale * refOrigin.y - worldOrigin.y),
+    ] as const;
     const stage =
       method === "sequential"
         ? Math.min(friends.length - 1, Math.floor(progress * friends.length))
@@ -176,16 +184,22 @@ export function createStreetRenderer(
       stageCache = stage;
       runningCache = running;
     }
-    if (reset) ctx.clearRect(0, 0, width, height);
-    tip.clearRect(0, 0, width, height);
-    ctx.translate(-worldOrigin.x, -worldOrigin.y);
-    tip.translate(-worldOrigin.x, -worldOrigin.y);
+    if (reset) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    tip.setTransform(1, 0, 0, 1, 0, 0);
+    tip.clearRect(0, 0, front.width, front.height);
+    ctx.setTransform(...transform);
+    tip.setTransform(...transform);
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
     const lineScale = Math.max(0.7, Math.min(2.5, 2 ** ((zoom - 12) * 0.5)));
     if (reset) {
       cursor = 0;
       ctx.strokeStyle = "#32413d";
       ctx.globalAlpha = 0.64;
-      ctx.lineWidth = 0.65 * lineScale;
+      ctx.lineWidth = (0.65 * lineScale) / scale;
       ctx.stroke(base);
     }
     previousRadius = radius;
@@ -201,14 +215,14 @@ export function createStreetRenderer(
       indices.forEach((index) => trace(ctx, index));
       ctx.strokeStyle = friendColor(friends[i]);
       ctx.globalAlpha = running ? 0.85 : 0.42;
-      ctx.lineWidth = lineScale;
+      ctx.lineWidth = lineScale / scale;
       ctx.stroke();
       if (running && !reset) {
         tip.beginPath();
         indices.forEach((index) => trace(tip, index));
         tip.strokeStyle = "#ecfff4";
         tip.globalAlpha = 0.85;
-        tip.lineWidth = 1.3 * lineScale;
+        tip.lineWidth = (1.3 * lineScale) / scale;
         tip.stroke();
       }
     });
@@ -218,7 +232,7 @@ export function createStreetRenderer(
           ctx.beginPath();
           path.forEach((index) => trace(ctx, index));
           ctx.strokeStyle = friendColor(friends[i]);
-          ctx.lineWidth = glow ? 11 : 3;
+          ctx.lineWidth = (glow ? 11 : 3) / scale;
           ctx.globalAlpha = glow ? 0.16 : 1;
           ctx.lineJoin = "round";
           ctx.lineCap = "round";
@@ -228,15 +242,5 @@ export function createStreetRenderer(
     }
   };
 
-  const transform = (center: L.LatLng, zoom: number) => {
-    const scale = map.getZoomScale(zoom, drawnZoom);
-    const viewHalf = map.getSize().multiplyBy(0.5 + PADDING);
-    const offset = viewHalf
-      .multiplyBy(-scale)
-      .add(map.project(drawnCenter, zoom))
-      .subtract((map as any)._getNewPixelOrigin(center, zoom));
-    for (const c of [canvas, front]) L.DomUtil.setTransform(c, offset, scale);
-  };
-
-  return { draw, transform };
+  return { draw };
 }
