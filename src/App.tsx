@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
-  ArrowUpRight,
   Check,
   ChevronDown,
   CircleHelp,
@@ -14,6 +13,7 @@ import {
   Navigation,
   Plus,
   RotateCcw,
+  Search,
   Share2,
   Sparkles,
   Users,
@@ -44,6 +44,8 @@ import {
   type Objective,
 } from "./planner";
 import { validateNetwork, nearStreet } from "./network";
+import { locate } from "./geolocate";
+import { nearestSnap } from "./sheet";
 
 export default function App() {
   const [initial] = useState(() => {
@@ -74,13 +76,30 @@ export default function App() {
       serial: 0,
     }),
     [copied, setCopied] = useState(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const notice = notification.message;
   function setNotice(message: string) {
     setNotification((n) => ({ message, serial: n.serial + 1 }));
   }
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [download, setDownload] = useState(0);
-  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth > 760);
+  const [sheet, setSheet] = useState<"peek" | "half" | "full">(() =>
+    window.innerWidth > 760 ? "half" : "peek",
+  );
+  const [phonePortrait, setPhonePortrait] = useState(
+    () =>
+      window.matchMedia("(max-width: 760px) and (min-height: 501px)").matches,
+  );
+  const [highlightedOption, setHighlightedOption] = useState<number | null>(
+    null,
+  );
+  useEffect(() => {
+    if (highlightedOption === null) return;
+    document
+      .getElementById(`place-option-${highlightedOption}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlightedOption]);
   const shared = useRef(initial.shared),
     autoFind = useRef(initial.autoFind),
     skip = useRef(false);
@@ -95,7 +114,36 @@ export default function App() {
   const worker = useRef<Worker | null>(null),
     timer = useRef<number>(0),
     nextId = useRef(Math.max(...initial.friends.map((f) => f.id)) + 1),
-    dialog = useRef<HTMLDialogElement>(null);
+    dialog = useRef<HTMLDialogElement>(null),
+    sheetDrag = useRef<{
+      pointerId: number;
+      startY: number;
+      startHeight: number;
+      peekHeight: number;
+      moved: boolean;
+    } | null>(null);
+  const panelOpen = sheet !== "peek";
+  useEffect(() => {
+    const query = window.matchMedia(
+      "(max-width: 760px) and (min-height: 501px)",
+    );
+    const update = () => setPhonePortrait(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    const workspace = document.querySelector<HTMLElement>(".workspace");
+    const sidebar = document.querySelector<HTMLElement>(".sidebar");
+    if (!workspace || !sidebar) return;
+    const resize = new ResizeObserver(() => {
+      workspace.style.setProperty(
+        "--sheet-height",
+        `${sidebar.getBoundingClientRect().height}px`,
+      );
+    });
+    resize.observe(sidebar);
+    return () => resize.disconnect();
+  }, []);
   useEffect(() => {
     if (initial.invalid) history.replaceState(null, "", location.pathname);
   }, [initial.invalid]);
@@ -182,23 +230,28 @@ export default function App() {
     setRunning(false);
     setComputing(false);
   }
-  function moveFriend(id: number, lat: number, lng: number) {
+  function validatedClosest(lat: number, lng: number) {
     if (!insideCoverage(lat, lng)) {
       setNotice("Choose a point within Jakarta.");
-      setFriends((f) => [...f]);
-      return;
+      return null;
     }
     if (!network || !nearStreet(network, [lat, lng])) {
       setNotice("Choose a point near a Jakarta street, not water.");
-      setFriends((f) => [...f]);
-      return;
+      return null;
     }
-    clearResult();
-    const closest = [...places].sort(
+    return [...places].sort(
       (a, b) =>
         distance([a.lat, a.lng], [lat, lng]) -
         distance([b.lat, b.lng], [lat, lng]),
     )[0];
+  }
+  function moveFriend(id: number, lat: number, lng: number) {
+    const closest = validatedClosest(lat, lng);
+    if (!closest) {
+      setFriends((f) => [...f]);
+      return;
+    }
+    clearResult();
     setFriends((fs) =>
       fs.map((f) =>
         f.id === id
@@ -208,6 +261,38 @@ export default function App() {
     );
     setActive(null);
     focusLocation(id);
+  }
+  function addFriend(
+    place: Place = places[4],
+    { select = true }: { select?: boolean } = {},
+  ) {
+    clearResult();
+    const id = nextId.current++;
+    setFriends((fs) => [
+      ...fs,
+      {
+        id,
+        name: `Friend ${id + 1}`,
+        place,
+        color: colors.findIndex(
+          (_, index) =>
+            !fs.some((friend) => friendColorIndex(friend) === index),
+        ),
+      },
+    ]);
+    if (!select) return;
+    setActive(id);
+    setQuery("");
+    setHighlightedOption(null);
+  }
+  function addFriendAt(lat: number, lng: number) {
+    if (friends.length >= 6) return;
+    const closest = validatedClosest(lat, lng);
+    if (!closest) return;
+    addFriend(
+      { name: `Pin near ${closest.name}`, lat, lng },
+      { select: false },
+    );
   }
   function focusLocation(id: number) {
     requestAnimationFrame(() =>
@@ -221,12 +306,109 @@ export default function App() {
     setActive(null);
     if (id !== null) focusLocation(id);
   }
+  async function chooseMyLocation() {
+    const id = active;
+    if (id === null) return;
+    try {
+      const position = await locate();
+      if (activeRef.current === id) moveFriend(id, position.lat, position.lng);
+    } catch {
+      if (activeRef.current === id) setNotice("Location unavailable.");
+    }
+  }
+  function chooseOption(index: number) {
+    if (index === 0) {
+      void chooseMyLocation();
+    } else if (index === 1) {
+      setSheet("peek");
+    } else {
+      const place = matches[index - 2];
+      if (place) choosePlace(place);
+    }
+  }
+  function collapsedHeight() {
+    const sidebar = document.querySelector<HTMLElement>(".sidebar");
+    if (!sidebar) return 0;
+    const clone = sidebar.cloneNode(true) as HTMLElement;
+    clone.classList.add("collapsed", "sheet-peek");
+    clone.classList.remove("sheet-half", "sheet-full", "sheet-dragging");
+    clone
+      .querySelector<HTMLElement>(".panel-content")
+      ?.setAttribute("hidden", "");
+    Object.assign(clone.style, {
+      position: "fixed",
+      top: "0",
+      right: "auto",
+      bottom: "auto",
+      left: "-10000px",
+      height: "auto",
+      maxHeight: "none",
+      visibility: "hidden",
+    });
+    document.body.append(clone);
+    const height = clone.getBoundingClientRect().height;
+    clone.remove();
+    return height;
+  }
+  function beginSheetDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (!phonePortrait || event.button !== 0) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("button, input, select, a")
+    )
+      return;
+    const sidebar = document.querySelector<HTMLElement>(".sidebar");
+    if (!sidebar) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    sheetDrag.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: sidebar.getBoundingClientRect().height,
+      peekHeight: collapsedHeight(),
+      moved: false,
+    };
+  }
+  function moveSheetDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = sheetDrag.current;
+    const sidebar = document.querySelector<HTMLElement>(".sidebar");
+    if (!drag || !sidebar || drag.pointerId !== event.pointerId) return;
+    const delta = drag.startY - event.clientY;
+    if (Math.abs(delta) >= 5) drag.moved = true;
+    if (!drag.moved) return;
+    const max = window.innerHeight - 72;
+    const height = Math.max(
+      drag.peekHeight,
+      Math.min(max, drag.startHeight + delta),
+    );
+    sidebar.style.height = `${height}px`;
+    sidebar.classList.add("sheet-dragging");
+  }
+  function endSheetDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = sheetDrag.current;
+    const sidebar = document.querySelector<HTMLElement>(".sidebar");
+    if (!drag || !sidebar || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) {
+      const snaps = [
+        drag.peekHeight,
+        window.innerHeight * 0.5,
+        window.innerHeight - 72,
+      ];
+      const index = nearestSnap(sidebar.getBoundingClientRect().height, snaps);
+      setSheet((["peek", "half", "full"] as const)[index] ?? "peek");
+    } else {
+      setSheet(sheet === "peek" ? "half" : "peek");
+    }
+    sidebar.style.removeProperty("height");
+    sidebar.classList.remove("sheet-dragging");
+    sheetDrag.current = null;
+  }
   function start(replay = false) {
     if (!network) return;
     setActive(null);
     setNotice("");
     skip.current = false;
-    if (window.innerWidth <= 760) setPanelOpen(false);
+    if (window.innerWidth <= 760) setSheet("peek");
     requestAnimationFrame(() =>
       document.getElementById("planner-toggle")?.focus(),
     );
@@ -307,6 +489,9 @@ export default function App() {
       );
   }
   const done = !!result && !running && !computing;
+  useEffect(() => {
+    if (done && phonePortrait) setSheet("peek");
+  }, [done, phonePortrait]);
   const together = !!result && sameLocation(friends);
   const meeting =
     result && network
@@ -391,33 +576,61 @@ export default function App() {
         </nav>
       </header>
       <main>
-        <section className="workspace" aria-label="Plan your meetup">
+        <section
+          className={`workspace${sheet === "full" ? " sheet-full" : ""}`}
+          aria-label="Plan your meetup"
+        >
           <aside
-            className={`sidebar ${panelOpen ? "" : "collapsed"}`}
+            className={`sidebar sheet-${sheet}${panelOpen ? "" : " collapsed"}`}
             aria-label="Friends and search"
           >
-            <div className="sidebar-title">
-              <h1>Friends</h1>
-              <span className="friend-count">
-                <Users size={13} />
-                {friends.length}/6
-              </span>
-              <button
-                id="planner-toggle"
-                className="panel-toggle icon-button"
-                aria-label={
-                  panelOpen ? "Collapse controls" : "Edit friends and search"
-                }
-                aria-expanded={panelOpen}
-                aria-controls="planner-controls"
-                onClick={() => {
-                  setPanelOpen(!panelOpen);
-                  setActive(null);
-                }}
-              >
-                <ChevronDown size={18} />
-              </button>
+            <div
+              className="sheet-grab-area"
+              onPointerDown={beginSheetDrag}
+              onPointerMove={moveSheetDrag}
+              onPointerUp={endSheetDrag}
+              onPointerCancel={endSheetDrag}
+            >
+              <span className="sheet-grab-handle" aria-hidden="true" />
+              <div className="sidebar-title">
+                <h1>Friends</h1>
+                <span className="friend-count">
+                  <Users size={13} />
+                  {friends.length}/6
+                </span>
+                <button
+                  id="planner-toggle"
+                  className="panel-toggle icon-button"
+                  aria-label={
+                    panelOpen ? "Collapse controls" : "Edit friends and search"
+                  }
+                  aria-expanded={panelOpen}
+                  aria-controls="planner-controls"
+                  onClick={() => {
+                    setSheet(sheet === "peek" ? "half" : "peek");
+                    setActive(null);
+                  }}
+                >
+                  <ChevronDown size={18} />
+                </button>
+              </div>
             </div>
+            {phonePortrait && done && nearby && meeting && active === null && (
+              <ResultCard
+                result={result!}
+                together={together}
+                nearby={nearby}
+                meeting={meeting}
+                onShare={share}
+                onCopy={() => {
+                  navigator.clipboard
+                    ?.writeText(`${meeting[0]}, ${meeting[1]}`)
+                    .then(() => setNotice("Meeting coordinates copied."))
+                    .catch(() => setNotice("Could not copy coordinates."));
+                }}
+                onReplay={() => start(true)}
+              />
+            )}
             <div
               className="panel-content"
               id="planner-controls"
@@ -426,82 +639,224 @@ export default function App() {
               <div className="friend-list">
                 {friends.map((f, i) => (
                   <div
-                    className="friend-row"
+                    className={`friend-entry ${active === f.id ? "has-picker" : ""}`}
                     key={f.id}
-                    style={
-                      {
-                        "--friend-color": friendColor(f),
-                      } as React.CSSProperties
-                    }
                   >
-                    <div className="friend-avatar">{friendInitial(f)}</div>
-                    <div className="friend-inputs">
-                      <div className="friend-name-line">
-                        <input
-                          aria-label={`Friend ${i + 1} name`}
-                          value={f.name}
-                          placeholder={friendLabel({ ...f, name: "" })}
-                          maxLength={30}
-                          onBlur={() => {
-                            if (!f.name.trim())
+                    <div
+                      className="friend-row"
+                      style={
+                        {
+                          "--friend-color": friendColor(f),
+                        } as React.CSSProperties
+                      }
+                    >
+                      <div className="friend-avatar">{friendInitial(f)}</div>
+                      <div className="friend-inputs">
+                        <div className="friend-name-line">
+                          <input
+                            aria-label={`Friend ${i + 1} name`}
+                            value={f.name}
+                            placeholder={friendLabel({ ...f, name: "" })}
+                            maxLength={30}
+                            onBlur={() => {
+                              if (!f.name.trim())
+                                setFriends((fs) =>
+                                  fs.map((x) =>
+                                    x.id === f.id
+                                      ? { ...x, name: friendLabel(f) }
+                                      : x,
+                                  ),
+                                );
+                            }}
+                            onChange={(e) => {
                               setFriends((fs) =>
                                 fs.map((x) =>
                                   x.id === f.id
-                                    ? { ...x, name: friendLabel(f) }
+                                    ? { ...x, name: e.target.value }
                                     : x,
                                 ),
                               );
+                            }}
+                          />
+                          {done && (
+                            <span className="trip-distance">
+                              {result.trips[i].toFixed(1)} <small>km</small>
+                            </span>
+                          )}
+                          {friends.length > 2 && (
+                            <button
+                              className="remove-friend"
+                              disabled={busy}
+                              aria-label={`Remove ${friendLabel(f)}`}
+                              onClick={() => {
+                                clearResult();
+                                setActive(null);
+                                setFriends((fs) =>
+                                  fs.filter((x) => x.id !== f.id),
+                                );
+                                focusLocation(
+                                  friends[i + 1]?.id ?? friends[i - 1].id,
+                                );
+                              }}
+                            >
+                              <X size={13} />
+                            </button>
+                          )}
+                        </div>
+                        <button
+                          id={`location-${f.id}`}
+                          aria-label={`${friendLabel(f)} starting point: ${f.place.name}`}
+                          className={`location-field ${active === f.id ? "is-active" : ""}`}
+                          disabled={busy}
+                          onClick={() => {
+                            setActive(active === f.id ? null : f.id);
+                            setQuery("");
+                            setHighlightedOption(null);
                           }}
-                          onChange={(e) => {
-                            setFriends((fs) =>
-                              fs.map((x) =>
-                                x.id === f.id
-                                  ? { ...x, name: e.target.value }
-                                  : x,
-                              ),
-                            );
-                          }}
-                        />
-                        {done && (
-                          <span className="trip-distance">
-                            {result.trips[i].toFixed(1)} <small>km</small>
-                          </span>
-                        )}
-                        {friends.length > 2 && (
+                        >
+                          <MapPin size={12} />
+                          <span>{f.place.name}</span>
+                          <ChevronDown size={12} />
+                        </button>
+                      </div>
+                    </div>
+                    {active === f.id && (
+                      <div className="place-picker">
+                        <div className="picker-heading">
+                          <strong>Starting point</strong>
                           <button
-                            className="remove-friend"
-                            disabled={busy}
-                            aria-label={`Remove ${friendLabel(f)}`}
-                            onClick={() => {
-                              clearResult();
-                              setActive(null);
-                              setFriends((fs) =>
-                                fs.filter((x) => x.id !== f.id),
-                              );
-                              focusLocation(
-                                friends[i + 1]?.id ?? friends[i - 1].id,
+                            className="icon-button"
+                            aria-label="Close location search"
+                            onClick={() => setActive(null)}
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <div className="place-search-wrap">
+                          <Search size={16} aria-hidden="true" />
+                          <input
+                            autoFocus
+                            id="place-search"
+                            role="combobox"
+                            aria-label="Search Jakarta"
+                            aria-expanded="true"
+                            aria-controls="place-options"
+                            aria-autocomplete="list"
+                            aria-activedescendant={
+                              highlightedOption === null
+                                ? undefined
+                                : `place-option-${highlightedOption}`
+                            }
+                            className="place-search"
+                            placeholder="Search Jakarta"
+                            value={query}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              const nextMatches = searchPlaces(value);
+                              setQuery(value);
+                              setHighlightedOption(
+                                value && nextMatches.length ? 2 : null,
                               );
                             }}
+                            onKeyDown={(event) => {
+                              const optionCount = 2 + matches.length;
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                const id = active;
+                                setActive(null);
+                                if (id !== null) focusLocation(id);
+                              } else if (event.key === "ArrowDown") {
+                                event.preventDefault();
+                                setHighlightedOption((current) =>
+                                  current === null
+                                    ? 0
+                                    : (current + 1) % optionCount,
+                                );
+                              } else if (event.key === "ArrowUp") {
+                                event.preventDefault();
+                                setHighlightedOption((current) =>
+                                  current === null
+                                    ? optionCount - 1
+                                    : (current - 1 + optionCount) % optionCount,
+                                );
+                              } else if (
+                                event.key === "Enter" &&
+                                highlightedOption !== null
+                              ) {
+                                event.preventDefault();
+                                chooseOption(highlightedOption);
+                              }
+                            }}
+                          />
+                          {query && (
+                            <button
+                              className="clear-search"
+                              aria-label="Clear search"
+                              onClick={() => {
+                                setQuery("");
+                                setHighlightedOption(null);
+                                document
+                                  .getElementById("place-search")
+                                  ?.focus();
+                              }}
+                            >
+                              <X size={15} />
+                            </button>
+                          )}
+                        </div>
+                        <div
+                          className="place-options"
+                          id="place-options"
+                          role="listbox"
+                          aria-label="Location suggestions"
+                        >
+                          <button
+                            type="button"
+                            id="place-option-0"
+                            role="option"
+                            aria-selected={highlightedOption === 0}
+                            onClick={() => chooseOption(0)}
                           >
-                            <X size={13} />
+                            <Navigation size={15} />
+                            Your location
                           </button>
-                        )}
+                          <button
+                            type="button"
+                            id="place-option-1"
+                            role="option"
+                            aria-selected={highlightedOption === 1}
+                            onClick={() => chooseOption(1)}
+                          >
+                            <Crosshair size={15} />
+                            Choose on map
+                          </button>
+                          {matches.map((place, index) => (
+                            <button
+                              type="button"
+                              key={place.name}
+                              id={`place-option-${index + 2}`}
+                              role="option"
+                              aria-selected={highlightedOption === index + 2}
+                              onClick={() => choosePlace(place)}
+                            >
+                              <MapPin size={14} />
+                              {place.name}
+                            </button>
+                          ))}
+                          {!!query && !matches.length && (
+                            <div
+                              className="place-empty"
+                              role="option"
+                              aria-disabled="true"
+                            >
+                              {outsideQuery(query)
+                                ? "Only mainland Jakarta is covered."
+                                : "No match. Place a pin on the map."}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <button
-                        id={`location-${f.id}`}
-                        aria-label={`${friendLabel(f)} starting point: ${f.place.name}`}
-                        className={`location-field ${active === f.id ? "is-active" : ""}`}
-                        disabled={busy}
-                        onClick={() => {
-                          setActive(active === f.id ? null : f.id);
-                          setQuery("");
-                        }}
-                      >
-                        <MapPin size={12} />
-                        <span>{f.place.name}</span>
-                        <ChevronDown size={12} />
-                      </button>
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -509,87 +864,11 @@ export default function App() {
                 <button
                   className="add-friend"
                   disabled={busy}
-                  onClick={() => {
-                    clearResult();
-                    const id = nextId.current++;
-                    setFriends((fs) => [
-                      ...fs,
-                      {
-                        id,
-                        name: `Friend ${id + 1}`,
-                        place: places[4],
-                        color: colors.findIndex(
-                          (_, index) =>
-                            !fs.some(
-                              (friend) => friendColorIndex(friend) === index,
-                            ),
-                        ),
-                      },
-                    ]);
-                    setActive(id);
-                    setQuery("");
-                  }}
+                  onClick={() => addFriend()}
                 >
                   <Plus size={15} />
                   Add friend
                 </button>
-              )}
-              {active !== null && (
-                <div className="place-picker">
-                  <div className="picker-heading">
-                    <strong>Starting point</strong>
-                    <button
-                      className="icon-button"
-                      aria-label="Close location search"
-                      onClick={() => setActive(null)}
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                  <input
-                    autoFocus
-                    className="place-search"
-                    placeholder="Search Jakarta…"
-                    aria-label="Search Jakarta neighborhoods"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        e.preventDefault();
-                        const id = active;
-                        setActive(null);
-                        if (id !== null) focusLocation(id);
-                      }
-                      if (e.key === "Enter" && matches.length === 1) {
-                        e.preventDefault();
-                        choosePlace(matches[0]);
-                      }
-                    }}
-                  />
-                  <div className="place-options">
-                    {matches.map((p) => (
-                      <button key={p.name} onClick={() => choosePlace(p)}>
-                        <MapPin size={14} />
-                        {p.name}
-                        <ArrowUpRight size={13} />
-                      </button>
-                    ))}
-                    {!matches.length && (
-                      <p>
-                        {outsideQuery(query)
-                          ? "Only mainland Jakarta is covered."
-                          : "No match. Place a pin on the map."}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    className="picker-footer"
-                    onClick={() => setPanelOpen(false)}
-                  >
-                    <Crosshair size={13} />
-                    Place on map
-                  </button>
-                </div>
               )}
               <div className="search-options">
                 <label className="objective-label" htmlFor="objective">
@@ -702,6 +981,8 @@ export default function App() {
                 if (active !== null) moveFriend(active, lat, lng);
               }}
               onMove={moveFriend}
+              onAdd={addFriendAt}
+              onNotice={setNotice}
             />
             {(!network || loadError) && (
               <div className="map-loading" role="status">
@@ -780,73 +1061,21 @@ export default function App() {
                 />
               </div>
             )}
-            {done && nearby && meeting && active === null && (
-              <div className="result-card" aria-live="polite">
-                <div className="result-eyebrow">
-                  <span className="result-check">
-                    <Check size={11} />
-                  </span>
-                  Meeting point
-                  <button
-                    onClick={() => start(true)}
-                    title="Replay the search"
-                    aria-label="Replay the search"
-                  >
-                    <RotateCcw size={14} />
-                  </button>
-                </div>
-                <h2>
-                  {together ? "Together at" : "Near"} {nearby.name}
-                </h2>
-                <div className="result-stats">
-                  <div>
-                    <strong>
-                      {together
-                        ? "0"
-                        : Math.max(...result.trips) < 0.05
-                          ? "<0.1"
-                          : Math.max(...result.trips).toFixed(1)}
-                      <small> km</small>
-                    </strong>
-                    <span>
-                      {together ? "no travel needed" : "longest trip"}
-                    </span>
-                  </div>
-                  <div>
-                    <strong>
-                      {together
-                        ? "0"
-                        : result.trips.reduce((a, b) => a + b, 0) < 0.05
-                          ? "<0.1"
-                          : result.trips.reduce((a, b) => a + b, 0).toFixed(1)}
-                      <small> km</small>
-                    </strong>
-                    <span>total distance</span>
-                  </div>
-                </div>
-                <a
-                  className="maps-link"
-                  href={`https://www.google.com/maps/search/?api=1&query=${meeting[0]},${meeting[1]}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Navigation size={14} />
-                  Open in Maps
-                  <ArrowUpRight size={15} />
-                </a>
-                <button
-                  className="copy-coordinates"
-                  onClick={() => {
-                    navigator.clipboard
-                      ?.writeText(`${meeting[0]}, ${meeting[1]}`)
-                      .then(() => setNotice("Meeting coordinates copied."))
-                      .catch(() => setNotice("Could not copy coordinates."));
-                  }}
-                >
-                  <Copy size={11} />
-                  {meeting[0].toFixed(5)}, {meeting[1].toFixed(5)}
-                </button>
-              </div>
+            {!phonePortrait && done && nearby && meeting && active === null && (
+              <ResultCard
+                result={result!}
+                together={together}
+                nearby={nearby}
+                meeting={meeting}
+                onShare={share}
+                onCopy={() => {
+                  navigator.clipboard
+                    ?.writeText(`${meeting[0]}, ${meeting[1]}`)
+                    .then(() => setNotice("Meeting coordinates copied."))
+                    .catch(() => setNotice("Could not copy coordinates."));
+                }}
+                onReplay={() => start(true)}
+              />
             )}
           </div>
         </section>
@@ -936,5 +1165,87 @@ export default function App() {
         </button>
       </dialog>
     </>
+  );
+}
+
+function ResultCard({
+  result,
+  together,
+  nearby,
+  meeting,
+  onShare,
+  onCopy,
+  onReplay,
+}: {
+  result: SearchResult;
+  together: boolean;
+  nearby: Place;
+  meeting: number[];
+  onShare: () => void;
+  onCopy: () => void;
+  onReplay: () => void;
+}) {
+  const total = result.trips.reduce((sum, trip) => sum + trip, 0);
+  return (
+    <div className="result-card" aria-live="polite">
+      <div className="result-eyebrow">
+        <span className="result-check">
+          <Check size={11} />
+        </span>
+        Meeting point
+      </div>
+      <h2>
+        {together ? "Together at" : "Near"} {nearby.name}
+      </h2>
+      <div className="result-stats">
+        <div>
+          <strong>
+            {together
+              ? "0"
+              : Math.max(...result.trips) < 0.05
+                ? "<0.1"
+                : Math.max(...result.trips).toFixed(1)}
+            <small> km</small>
+          </strong>
+          <span>{together ? "no travel needed" : "longest trip"}</span>
+        </div>
+        <div>
+          <strong>
+            {together ? "0" : total < 0.05 ? "<0.1" : total.toFixed(1)}
+            <small> km</small>
+          </strong>
+          <span>total distance</span>
+        </div>
+      </div>
+      <div className="result-actions">
+        <a
+          className="directions-link"
+          href={`https://www.google.com/maps/dir/?api=1&destination=${meeting[0]},${meeting[1]}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <Navigation size={15} />
+          Directions
+        </a>
+        <div className="result-action">
+          <button onClick={onShare} aria-label="Share meeting point">
+            <Share2 size={16} />
+          </button>
+          <span>Share</span>
+        </div>
+        <div className="result-action">
+          <button onClick={onCopy} aria-label="Copy meeting coordinates">
+            <Copy size={16} />
+          </button>
+          <span>Copy</span>
+        </div>
+        <div className="result-action">
+          <button onClick={onReplay} aria-label="Replay the search">
+            <RotateCcw size={16} />
+          </button>
+          <span>Replay</span>
+        </div>
+      </div>
+    </div>
   );
 }
