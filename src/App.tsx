@@ -9,6 +9,7 @@ import {
   Copy,
   Crosshair,
   GitFork,
+  House,
   MapPin,
   Navigation,
   Plus,
@@ -19,82 +20,156 @@ import {
   X,
 } from "lucide-react";
 import MapView from "./MapView";
-import { colors, initialFriends, places, type Friend } from "./places";
+import {
+  colors,
+  initialFriends,
+  places,
+  friendLabel,
+  friendInitial,
+  friendColor,
+  friendColorIndex,
+  sameLocation,
+  type Friend,
+  type Place,
+} from "./places";
 import { distance, type Network, type SearchResult } from "./graph";
+import {
+  STORAGE_KEY,
+  readPlanner,
+  plannerUrl,
+  insideCoverage,
+  searchPlaces,
+  outsideQuery,
+  type Method,
+  type Objective,
+} from "./planner";
+import { validateNetwork, nearStreet } from "./network";
 
-function readFriends(): Friend[] {
-  try {
-    const value = new URLSearchParams(location.search).get("group");
-    if (value) {
-      const raw = JSON.parse(value);
-      if (
-        Array.isArray(raw) &&
-        raw.length >= 2 &&
-        raw.length <= 6 &&
-        raw.every(
-          (f) =>
-            typeof f.name === "string" &&
-            f.name.length <= 30 &&
-            typeof f.place?.name === "string" &&
-            f.place.name.length <= 100 &&
-            Number.isFinite(f.place.lat) &&
-            Number.isFinite(f.place.lng) &&
-            f.place.lat >= -6.36 &&
-            f.place.lat <= -6.1 &&
-            f.place.lng >= 106.72 &&
-            f.place.lng <= 106.97,
-        )
-      )
-        return raw.map((f, i) => ({ ...f, id: i }));
-    }
-  } catch {
-    /* Invalid shared links use the Jakarta demo. */
-  }
-  return initialFriends();
-}
 export default function App() {
-  const [friends, setFriends] = useState<Friend[]>(readFriends),
+  const [initial] = useState(() => {
+    let stored = null;
+    try {
+      stored = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      /* Storage may be unavailable. */
+    }
+    return readPlanner(location.search, stored);
+  });
+  const [friends, setFriends] = useState<Friend[]>(initial.friends),
     [network, setNetwork] = useState<Network | null>(null),
     [loadError, setLoadError] = useState(false),
     [result, setResult] = useState<SearchResult | null>(null),
     [running, setRunning] = useState(false),
     [progress, setProgress] = useState(0),
     [computing, setComputing] = useState(false),
-    [method, setMethod] = useState<"together" | "sequential">("together"),
-    [objective, setObjective] = useState<"balanced" | "total">("balanced"),
+    [method, setMethod] = useState<Method>(initial.method),
+    [objective, setObjective] = useState<Objective>(initial.objective),
     [active, setActive] = useState<number | null>(null),
     [query, setQuery] = useState(""),
     [help, setHelp] = useState(false),
-    [notice, setNotice] = useState(""),
+    [notification, setNotification] = useState({
+      message: initial.invalid
+        ? "Need 2 to 6 friends in Jakarta. Invalid link cleared."
+        : "",
+      serial: 0,
+    }),
     [copied, setCopied] = useState(false);
+  const notice = notification.message;
+  function setNotice(message: string) {
+    setNotification((n) => ({ message, serial: n.serial + 1 }));
+  }
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [download, setDownload] = useState(0);
+  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth > 760);
+  const shared = useRef(initial.shared),
+    autoFind = useRef(initial.autoFind),
+    skip = useRef(false);
+  const initialPlan = useRef(
+    JSON.stringify({
+      friends: initial.friends,
+      objective: initial.objective,
+      method: initial.method,
+    }),
+  );
+  const savePlan = useRef(!initial.shared);
   const worker = useRef<Worker | null>(null),
     timer = useRef<number>(0),
-    nextId = useRef(10),
+    nextId = useRef(Math.max(...initial.friends.map((f) => f.id)) + 1),
     dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
+    if (initial.invalid) history.replaceState(null, "", location.pathname);
+  }, [initial.invalid]);
+  useEffect(() => {
+    const planner = { friends, objective, method };
+    const serialized = JSON.stringify(planner);
+    if (serialized !== initialPlan.current) savePlan.current = true;
+    try {
+      if (savePlan.current) localStorage.setItem(STORAGE_KEY, serialized);
+    } catch {
+      /* URL sharing still works. */
+    }
+    if (shared.current)
+      history.replaceState(null, "", plannerUrl(location.href, planner));
+  }, [friends, objective, method]);
+  useEffect(() => {
     let live = true;
-    fetch(`${import.meta.env.BASE_URL}data/jakarta-network.json`)
-      .then((r) => {
+    const controller = new AbortController();
+    let timeout = setTimeout(() => controller.abort(), 20000);
+    setLoadError(false);
+    setDownload(0);
+    fetch(`${import.meta.env.BASE_URL}data/jakarta-network.json`, {
+      signal: controller.signal,
+    })
+      .then(async (r) => {
         if (!r.ok) throw new Error();
-        return r.json();
+        if (!r.body) return r.json();
+        const reader = r.body.getReader(),
+          chunks: Uint8Array[] = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => controller.abort(), 20000);
+          chunks.push(value);
+          received += value.length;
+          if (live) setDownload(received);
+        }
+        const bytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return JSON.parse(new TextDecoder().decode(bytes));
       })
       .then((data) => {
+        if (!validateNetwork(data)) throw new Error("Invalid street data");
         if (live) setNetwork(data);
       })
       .catch(() => {
         if (live) setLoadError(true);
-      });
+      })
+      .finally(() => clearTimeout(timeout));
     return () => {
       live = false;
+      controller.abort();
+      clearTimeout(timeout);
       worker.current?.terminate();
       cancelAnimationFrame(timer.current);
     };
-  }, []);
+  }, [loadAttempt]);
+  useEffect(() => {
+    if (network && autoFind.current) {
+      autoFind.current = false;
+      start();
+    }
+  }, [network]);
   useEffect(() => {
     if (!notice) return;
     const id = setTimeout(() => setNotice(""), 4500);
     return () => clearTimeout(id);
-  }, [notice]);
+  }, [notification.serial]);
   useEffect(() => {
     if (help) dialog.current?.showModal();
     else dialog.current?.close();
@@ -108,8 +183,13 @@ export default function App() {
     setComputing(false);
   }
   function moveFriend(id: number, lat: number, lng: number) {
-    if (lat < -6.36 || lat > -6.1 || lng < 106.72 || lng > 106.97) {
-      setNotice("Keep your starting point inside our Jakarta coverage.");
+    if (!insideCoverage(lat, lng)) {
+      setNotice("Choose a point within Jakarta.");
+      setFriends((f) => [...f]);
+      return;
+    }
+    if (!network || !nearStreet(network, [lat, lng])) {
+      setNotice("Choose a point near a Jakarta street, not water.");
       setFriends((f) => [...f]);
       return;
     }
@@ -127,23 +207,41 @@ export default function App() {
       ),
     );
     setActive(null);
+    focusLocation(id);
+  }
+  function focusLocation(id: number) {
+    requestAnimationFrame(() =>
+      document.getElementById(`location-${id}`)?.focus(),
+    );
+  }
+  function choosePlace(place: Place) {
+    clearResult();
+    setFriends((fs) => fs.map((f) => (f.id === active ? { ...f, place } : f)));
+    const id = active;
+    setActive(null);
+    if (id !== null) focusLocation(id);
   }
   function start(replay = false) {
     if (!network) return;
     setActive(null);
     setNotice("");
-    if (window.innerWidth <= 760)
-      document
-        .querySelector(".map-column")
-        ?.scrollIntoView({
-          behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
-            ? "instant"
-            : "smooth",
-          block: "start",
-        });
+    skip.current = false;
+    if (window.innerWidth <= 760) setPanelOpen(false);
+    requestAnimationFrame(() =>
+      document.getElementById("planner-toggle")?.focus(),
+    );
     const animate = (r: SearchResult) => {
       setResult(r);
       setComputing(false);
+      if (
+        skip.current ||
+        r.maxDistance < 0.001 ||
+        matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        setProgress(1);
+        setRunning(false);
+        return;
+      }
       setRunning(true);
       setProgress(0);
       const startTime = performance.now(),
@@ -189,9 +287,8 @@ export default function App() {
     });
   }
   function share() {
-    const url = new URL(location.href);
-    url.search = "";
-    url.searchParams.set("group", JSON.stringify(friends));
+    const url = plannerUrl(location.href, { friends, objective, method });
+    shared.current = true;
     navigator.clipboard
       ?.writeText(url.href)
       .then(() => {
@@ -210,14 +307,24 @@ export default function App() {
       );
   }
   const done = !!result && !running && !computing;
-  const meeting = result && network ? network.nodes[result.meeting] : null;
-  const nearby = meeting
-    ? [...places].sort(
-        (a, b) =>
-          distance([a.lat, a.lng], meeting) - distance([b.lat, b.lng], meeting),
-      )[0]
-    : null;
+  const together = !!result && sameLocation(friends);
+  const meeting =
+    result && network
+      ? together
+        ? [friends[0].place.lat, friends[0].place.lng]
+        : network.nodes[result.meeting]
+      : null;
+  const nearby = together
+    ? friends[0].place
+    : meeting
+      ? [...places].sort(
+          (a, b) =>
+            distance([a.lat, a.lng], meeting) -
+            distance([b.lat, b.lng], meeting),
+        )[0]
+      : null;
   const busy = running || computing;
+  const matches = searchPlaces(query);
   function countUntil(values: number[], radius: number) {
     let lo = 0,
       hi = values.length;
@@ -257,12 +364,20 @@ export default function App() {
           meet halfway<span className="brand-period">.</span>
         </a>
         <nav>
+          <a
+            className="home-nav"
+            href={import.meta.env.BASE_URL}
+            aria-label="Your saved plan"
+            title="Your saved plan"
+          >
+            <House size={16} />
+          </a>
           <button
             className="text-button help-nav"
             onClick={() => setHelp(true)}
           >
             <CircleHelp size={16} />
-            How it works
+            Help
           </button>
           <span className="nav-divider" />
           <button
@@ -271,257 +386,263 @@ export default function App() {
             aria-label={copied ? "Group link copied" : "Share your group"}
           >
             {copied ? <Check size={15} /> : <Share2 size={15} />}
-            <span>{copied ? "Link copied" : "Share your group"}</span>
+            <span>{copied ? "Copied" : "Share"}</span>
           </button>
         </nav>
       </header>
       <main>
-        <section className="intro">
-          <div>
-            <div className="eyebrow">
-              <span />
-              GOOD FRIENDS. FAIR JOURNEYS.
-            </div>
-            <h1>
-              Different starts. <span>One common ground.</span>
-            </h1>
-            <p>
-              Find a place that’s a little closer to everyone. Not just someone.
-            </p>
-          </div>
-          <div className="intro-note">
-            <div className="mini-avatars">
-              {["B", "P", "D", "S"].map((x, i) => (
-                <span key={x} style={{ color: colors[i] }}>
-                  {x}
-                </span>
-              ))}
-              <ArrowRight size={17} />
-              <span className="mini-meeting">✳</span>
-            </div>
-            <span>
-              Less “where should we go?”
-              <br />
-              <strong>More “see you there.”</strong>
-            </span>
-          </div>
-        </section>
         <section className="workspace" aria-label="Plan your meetup">
-          <aside className="sidebar">
+          <aside
+            className={`sidebar ${panelOpen ? "" : "collapsed"}`}
+            aria-label="Friends and search"
+          >
             <div className="sidebar-title">
-              <div>
-                <span className="step-number">01</span>
-                <h2>Where’s everyone?</h2>
-              </div>
+              <h1>Friends</h1>
               <span className="friend-count">
                 <Users size={13} />
-                {friends.length} friends
+                {friends.length}/6
               </span>
-            </div>
-            <p className="section-description">
-              Add your starting points. We’ll find the sweet spot.
-            </p>
-            <div className="friend-list">
-              {friends.map((f, i) => (
-                <div
-                  className="friend-row"
-                  key={f.id}
-                  style={{ "--friend-color": colors[i] } as React.CSSProperties}
-                >
-                  <div className="friend-avatar">
-                    {(f.name || "?")[0].toUpperCase()}
-                  </div>
-                  <div className="friend-inputs">
-                    <div className="friend-name-line">
-                      <input
-                        aria-label={`Friend ${i + 1} name`}
-                        value={f.name}
-                        maxLength={30}
-                        onChange={(e) => {
-                          setFriends((fs) =>
-                            fs.map((x) =>
-                              x.id === f.id
-                                ? { ...x, name: e.target.value }
-                                : x,
-                            ),
-                          );
-                        }}
-                      />
-                      {done && (
-                        <span className="trip-distance">
-                          {result.trips[i].toFixed(1)} <small>km</small>
-                        </span>
-                      )}
-                      {friends.length > 2 && (
-                        <button
-                          className="remove-friend"
-                          disabled={busy}
-                          aria-label={`Remove ${f.name || `friend ${i + 1}`}`}
-                          onClick={() => {
-                            clearResult();
-                            setActive(null);
-                            setFriends((fs) => fs.filter((x) => x.id !== f.id));
-                          }}
-                        >
-                          <X size={13} />
-                        </button>
-                      )}
-                    </div>
-                    <button
-                      className={`location-field ${active === f.id ? "is-active" : ""}`}
-                      disabled={busy}
-                      onClick={() => {
-                        setActive(active === f.id ? null : f.id);
-                        setQuery("");
-                      }}
-                    >
-                      <MapPin size={12} />
-                      <span>{f.place.name}</span>
-                      <ChevronDown size={12} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {friends.length < 6 && (
               <button
-                className="add-friend"
-                disabled={busy}
+                id="planner-toggle"
+                className="panel-toggle icon-button"
+                aria-label={
+                  panelOpen ? "Collapse controls" : "Edit friends and search"
+                }
+                aria-expanded={panelOpen}
+                aria-controls="planner-controls"
                 onClick={() => {
-                  clearResult();
-                  const id = nextId.current++;
-                  setFriends((fs) => [
-                    ...fs,
-                    { id, name: `Friend ${fs.length + 1}`, place: places[4] },
-                  ]);
-                  setActive(id);
-                  setQuery("");
+                  setPanelOpen(!panelOpen);
+                  setActive(null);
                 }}
               >
-                <Plus size={15} />
-                Add a friend
+                <ChevronDown size={18} />
               </button>
-            )}
-            <div className="map-tip">
-              <Crosshair size={14} />
-              <span>You can drag the pins on the map, too.</span>
             </div>
-            {active !== null && (
-              <div className="place-picker">
-                <div className="picker-heading">
-                  <strong>Choose a starting point</strong>
-                  <button
-                    className="icon-button"
-                    aria-label="Close location search"
-                    onClick={() => setActive(null)}
+            <div
+              className="panel-content"
+              id="planner-controls"
+              hidden={!panelOpen}
+            >
+              <div className="friend-list">
+                {friends.map((f, i) => (
+                  <div
+                    className="friend-row"
+                    key={f.id}
+                    style={
+                      {
+                        "--friend-color": friendColor(f),
+                      } as React.CSSProperties
+                    }
                   >
-                    <X size={16} />
-                  </button>
-                </div>
-                <input
-                  autoFocus
-                  className="place-search"
-                  placeholder="Search Jakarta neighborhoods…"
-                  aria-label="Search Jakarta neighborhoods"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                <div className="place-options">
-                  {places
-                    .filter((p) =>
-                      p.name.toLowerCase().includes(query.toLowerCase()),
-                    )
-                    .map((p) => (
+                    <div className="friend-avatar">{friendInitial(f)}</div>
+                    <div className="friend-inputs">
+                      <div className="friend-name-line">
+                        <input
+                          aria-label={`Friend ${i + 1} name`}
+                          value={f.name}
+                          placeholder={friendLabel({ ...f, name: "" })}
+                          maxLength={30}
+                          onBlur={() => {
+                            if (!f.name.trim())
+                              setFriends((fs) =>
+                                fs.map((x) =>
+                                  x.id === f.id
+                                    ? { ...x, name: friendLabel(f) }
+                                    : x,
+                                ),
+                              );
+                          }}
+                          onChange={(e) => {
+                            setFriends((fs) =>
+                              fs.map((x) =>
+                                x.id === f.id
+                                  ? { ...x, name: e.target.value }
+                                  : x,
+                              ),
+                            );
+                          }}
+                        />
+                        {done && (
+                          <span className="trip-distance">
+                            {result.trips[i].toFixed(1)} <small>km</small>
+                          </span>
+                        )}
+                        {friends.length > 2 && (
+                          <button
+                            className="remove-friend"
+                            disabled={busy}
+                            aria-label={`Remove ${friendLabel(f)}`}
+                            onClick={() => {
+                              clearResult();
+                              setActive(null);
+                              setFriends((fs) =>
+                                fs.filter((x) => x.id !== f.id),
+                              );
+                              focusLocation(
+                                friends[i + 1]?.id ?? friends[i - 1].id,
+                              );
+                            }}
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
                       <button
-                        key={p.name}
+                        id={`location-${f.id}`}
+                        aria-label={`${friendLabel(f)} starting point: ${f.place.name}`}
+                        className={`location-field ${active === f.id ? "is-active" : ""}`}
+                        disabled={busy}
                         onClick={() => {
-                          clearResult();
-                          setFriends((fs) =>
-                            fs.map((f) =>
-                              f.id === active ? { ...f, place: p } : f,
-                            ),
-                          );
-                          setActive(null);
+                          setActive(active === f.id ? null : f.id);
+                          setQuery("");
                         }}
                       >
+                        <MapPin size={12} />
+                        <span>{f.place.name}</span>
+                        <ChevronDown size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {friends.length < 6 && (
+                <button
+                  className="add-friend"
+                  disabled={busy}
+                  onClick={() => {
+                    clearResult();
+                    const id = nextId.current++;
+                    setFriends((fs) => [
+                      ...fs,
+                      {
+                        id,
+                        name: `Friend ${id + 1}`,
+                        place: places[4],
+                        color: colors.findIndex(
+                          (_, index) =>
+                            !fs.some(
+                              (friend) => friendColorIndex(friend) === index,
+                            ),
+                        ),
+                      },
+                    ]);
+                    setActive(id);
+                    setQuery("");
+                  }}
+                >
+                  <Plus size={15} />
+                  Add friend
+                </button>
+              )}
+              {active !== null && (
+                <div className="place-picker">
+                  <div className="picker-heading">
+                    <strong>Starting point</strong>
+                    <button
+                      className="icon-button"
+                      aria-label="Close location search"
+                      onClick={() => setActive(null)}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <input
+                    autoFocus
+                    className="place-search"
+                    placeholder="Search Jakarta…"
+                    aria-label="Search Jakarta neighborhoods"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        const id = active;
+                        setActive(null);
+                        if (id !== null) focusLocation(id);
+                      }
+                      if (e.key === "Enter" && matches.length === 1) {
+                        e.preventDefault();
+                        choosePlace(matches[0]);
+                      }
+                    }}
+                  />
+                  <div className="place-options">
+                    {matches.map((p) => (
+                      <button key={p.name} onClick={() => choosePlace(p)}>
                         <MapPin size={14} />
                         {p.name}
                         <ArrowUpRight size={13} />
                       </button>
                     ))}
-                  {!places.some((p) =>
-                    p.name.toLowerCase().includes(query.toLowerCase()),
-                  ) && (
-                    <p>
-                      No saved place found. Click the map to drop a precise pin
-                      instead.
-                    </p>
-                  )}
+                    {!matches.length && (
+                      <p>
+                        {outsideQuery(query)
+                          ? "Only mainland Jakarta is covered."
+                          : "No match. Place a pin on the map."}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    className="picker-footer"
+                    onClick={() => setPanelOpen(false)}
+                  >
+                    <Crosshair size={13} />
+                    Place on map
+                  </button>
                 </div>
-                <div className="picker-footer">
-                  <Crosshair size={13} />
-                  Or click anywhere on the map to place the pin.
+              )}
+              <div className="search-options">
+                <label className="objective-label" htmlFor="objective">
+                  Optimize
+                </label>
+                <div className="select-wrap">
+                  <select
+                    id="objective"
+                    value={objective}
+                    disabled={busy}
+                    onChange={(e) => {
+                      clearResult();
+                      setObjective(e.target.value as "balanced" | "total");
+                    }}
+                  >
+                    <option value="balanced">Shortest longest trip</option>
+                    <option value="total">Shortest total distance</option>
+                  </select>
+                  <ChevronDown size={14} />
+                </div>
+                <div className="method-label">
+                  Animation{" "}
+                  <button
+                    className="icon-button"
+                    aria-label="About the search animation"
+                    onClick={() => setHelp(true)}
+                  >
+                    <CircleHelp size={12} />
+                  </button>
+                </div>
+                <div className="segmented">
+                  <button
+                    className={method === "together" ? "selected" : ""}
+                    aria-pressed={method === "together"}
+                    disabled={busy}
+                    onClick={() => {
+                      setMethod("together");
+                    }}
+                  >
+                    <Users size={14} />
+                    All at once
+                  </button>
+                  <button
+                    className={method === "sequential" ? "selected" : ""}
+                    aria-pressed={method === "sequential"}
+                    disabled={busy}
+                    onClick={() => setMethod("sequential")}
+                  >
+                    <ArrowDown size={14} />
+                    One by one
+                  </button>
                 </div>
               </div>
-            )}
-            <div className="search-options">
-              <div className="section-label">
-                <span className="step-number">02</span>
-                <h2>Make it fair</h2>
-              </div>
-              <label className="objective-label" htmlFor="objective">
-                Choose what matters most
-              </label>
-              <div className="select-wrap">
-                <select
-                  id="objective"
-                  value={objective}
-                  disabled={busy}
-                  onChange={(e) => {
-                    clearResult();
-                    setObjective(e.target.value as "balanced" | "total");
-                  }}
-                >
-                  <option value="balanced">Balance everyone’s distance</option>
-                  <option value="total">Shortest total group distance</option>
-                </select>
-                <ChevronDown size={14} />
-              </div>
-              <div className="method-label">
-                WATCH THE SEARCH{" "}
-                <button
-                  className="icon-button"
-                  aria-label="About the search animation"
-                  onClick={() => setHelp(true)}
-                >
-                  <CircleHelp size={12} />
-                </button>
-              </div>
-              <div className="segmented">
-                <button
-                  className={method === "together" ? "selected" : ""}
-                  disabled={busy}
-                  onClick={() => {
-                    setMethod("together");
-                  }}
-                >
-                  <Users size={14} />
-                  All at once
-                </button>
-                <button
-                  className={method === "sequential" ? "selected" : ""}
-                  disabled={busy}
-                  onClick={() => setMethod("sequential")}
-                >
-                  <ArrowDown size={14} />
-                  One by one
-                </button>
-              </div>
-              <p className="method-description">
-                {method === "together"
-                  ? "Everyone sets off together. Watch their paths meet."
-                  : "One friend at a time. Same fair destination."}
-              </p>
             </div>
             <div className="sidebar-bottom">
               <button
@@ -532,16 +653,20 @@ export default function App() {
                 {busy ? (
                   <>
                     <span className="spinner" />
-                    {computing
-                      ? "Finding common ground…"
-                      : "Following the streets…"}
+                    Searching…
                   </>
                 ) : (
                   <>
-                    <Sparkles size={17} />
-                    {done
-                      ? "Find a new meeting point"
-                      : "Find our meeting point"}
+                    {!network ? (
+                      <span className="spinner" />
+                    ) : (
+                      <Sparkles size={17} />
+                    )}
+                    {!network
+                      ? loadError
+                        ? "Map unavailable"
+                        : "Loading streets…"
+                      : "Find meeting point"}
                     <ArrowRight size={17} />
                   </>
                 )}
@@ -552,12 +677,15 @@ export default function App() {
                 onClick={() => {
                   clearResult();
                   setFriends(initialFriends());
+                  setObjective("balanced");
+                  setMethod("together");
+                  shared.current = false;
                   setActive(null);
                   history.replaceState(null, "", location.pathname);
                 }}
               >
                 <RotateCcw size={12} />
-                Reset to the Jakarta example
+                Reset
               </button>
             </div>
           </aside>
@@ -580,33 +708,25 @@ export default function App() {
                 {loadError ? (
                   <>
                     <strong>Couldn’t load Jakarta’s streets.</strong>
-                    <button onClick={() => location.reload()}>Try again</button>
+                    <button onClick={() => setLoadAttempt((x) => x + 1)}>
+                      Try again
+                    </button>
                   </>
                 ) : (
                   <>
                     <span className="spinner" />
-                    Unfolding Jakarta’s streets…
+                    Loading streets
+                    {download > 0
+                      ? ` · ${(download / 1000000).toFixed(1)} MB`
+                      : "…"}
                   </>
                 )}
-              </div>
-            )}
-            {!result && network && !computing && active === null && (
-              <div className="map-invitation">
-                <div className="invitation-icon">
-                  <GitFork size={19} />
-                </div>
-                <div>
-                  <strong>Four corners. One catch-up.</strong>
-                  <span>Your next good plan starts here.</span>
-                </div>
-                <ArrowUpRight size={17} />
               </div>
             )}
             {active !== null && (
               <div className="map-pick-message">
                 <Crosshair size={15} />
-                Click the map to set{" "}
-                {friends.find((f) => f.id === active)?.name}’s starting point
+                Place {friendLabel(friends.find((f) => f.id === active)!)}’s pin
                 <button
                   aria-label="Cancel placing pin"
                   onClick={() => setActive(null)}
@@ -621,10 +741,10 @@ export default function App() {
                 <div>
                   <strong>
                     {computing
-                      ? "Finding the fairest street…"
+                      ? "Searching…"
                       : method === "together"
-                        ? "Finding where your worlds meet…"
-                        : `Following ${friends[Math.min(friends.length - 1, Math.floor(progress * friends.length))].name}’s streets…`}
+                        ? "Searching…"
+                        : `Searching: ${friendLabel(friends[Math.min(friends.length - 1, Math.floor(progress * friends.length))])}`}
                   </strong>
                   <span>
                     {result
@@ -632,6 +752,19 @@ export default function App() {
                       : "Searching the real street network"}
                   </span>
                 </div>
+                <button
+                  className="skip-button"
+                  onClick={() => {
+                    skip.current = true;
+                    if (running) {
+                      cancelAnimationFrame(timer.current);
+                      setProgress(1);
+                      setRunning(false);
+                    }
+                  }}
+                >
+                  Skip
+                </button>
                 <button
                   onClick={() => {
                     clearResult();
@@ -647,13 +780,13 @@ export default function App() {
                 />
               </div>
             )}
-            {done && nearby && meeting && (
+            {done && nearby && meeting && active === null && (
               <div className="result-card" aria-live="polite">
                 <div className="result-eyebrow">
                   <span className="result-check">
                     <Check size={11} />
                   </span>
-                  COMMON GROUND FOUND
+                  Meeting point
                   <button
                     onClick={() => start(true)}
                     title="Replay the search"
@@ -663,34 +796,32 @@ export default function App() {
                   </button>
                 </div>
                 <h2>
-                  Meet near {nearby.name}
-                  <span>↗</span>
+                  {together ? "Together at" : "Near"} {nearby.name}
                 </h2>
-                <p>
-                  {objective === "balanced"
-                    ? "A shorter longest journey. A fairer catch-up."
-                    : "The least distance for your whole group."}
-                </p>
                 <div className="result-stats">
                   <div>
                     <strong>
-                      {Math.max(...result.trips).toFixed(1)}
+                      {together
+                        ? "0"
+                        : Math.max(...result.trips) < 0.05
+                          ? "<0.1"
+                          : Math.max(...result.trips).toFixed(1)}
                       <small> km</small>
                     </strong>
-                    <span>longest trip</span>
+                    <span>
+                      {together ? "no travel needed" : "longest trip"}
+                    </span>
                   </div>
                   <div>
                     <strong>
-                      {(
-                        result.trips.reduce((a, b) => a + b, 0) / friends.length
-                      ).toFixed(1)}
+                      {together
+                        ? "0"
+                        : result.trips.reduce((a, b) => a + b, 0) < 0.05
+                          ? "<0.1"
+                          : result.trips.reduce((a, b) => a + b, 0).toFixed(1)}
                       <small> km</small>
                     </strong>
-                    <span>average trip</span>
-                  </div>
-                  <div>
-                    <strong>{friends.length}</strong>
-                    <span>happy friends</span>
+                    <span>total distance</span>
                   </div>
                 </div>
                 <a
@@ -700,7 +831,7 @@ export default function App() {
                   rel="noreferrer"
                 >
                   <Navigation size={14} />
-                  Explore this spot in Maps
+                  Open in Maps
                   <ArrowUpRight size={15} />
                 </a>
                 <button
@@ -719,20 +850,12 @@ export default function App() {
             )}
           </div>
         </section>
-        <footer className="site-footer">
-          <span>
-            <i />
-            Made for the plans that actually leave the group chat.
-          </span>
-          <span>
-            Jakarta edition <span className="footer-dot">·</span> Street
-            distance, not travel time{" "}
-            <button onClick={() => setHelp(true)} aria-label="Distance details">
-              <CircleHelp size={12} />
-            </button>
-          </span>
-        </footer>
       </main>
+      <span className="sr-only" role="status" aria-live="polite">
+        {done && nearby
+          ? `Meeting point: ${together ? "Together at" : "Near"} ${nearby.name}. Total distance ${result.trips.reduce((a, b) => a + b, 0).toFixed(1)} kilometres.`
+          : ""}
+      </span>
       {notice && (
         <div className="toast" role="alert">
           {notice}
@@ -758,33 +881,25 @@ export default function App() {
         >
           <X size={20} />
         </button>
-        <span className="eyebrow">A FAIRER WAY TO CATCH UP</span>
-        <h2>
-          Not the middle.
-          <br />
-          The common ground.
-        </h2>
-        <p>
-          A midpoint on a map can leave one friend with a much longer journey.
-          We follow Jakarta’s actual streets instead.
-        </p>
+        <h2>How it works</h2>
         <ol>
           <li>
-            <strong>Start with your people.</strong>
+            <strong>Add 2–6 friends.</strong>
             <span>
               Choose 2–6 starting points from saved Jakarta places, drag a pin,
               or click the map.
             </span>
           </li>
           <li>
-            <strong>Choose your kind of fair.</strong>
+            <strong>Choose an objective.</strong>
             <span>
-              Balanced trips minimizes the longest street distance. Shortest
-              total minimizes the distance everyone travels combined.
+              “Balance everyone’s distance” minimizes the longest street trip.
+              “Shortest total group distance” minimizes everyone’s combined
+              distance.
             </span>
           </li>
           <li>
-            <strong>Watch your paths come together.</strong>
+            <strong>Find a meeting point.</strong>
             <span>
               Colored waves follow shortest street distances from each friend.
               Both animation modes find the same point.
@@ -802,13 +917,21 @@ export default function App() {
             venues in Maps before heading out.
           </p>
           <p>
-            Coverage: central Jakarta and surrounding neighborhoods,
-            106.72–106.97°E, 6.10–6.36°S. Street data is bundled, so no map API
-            key is needed. Shared links contain your chosen names and locations.
+            Coverage: mainland Jakarta, 106.68–106.98°E, 6.08–6.38°S. Islands
+            and locations away from mapped streets are not supported. Street
+            data is bundled, so no map API key is needed. Shared links contain
+            your chosen names and locations.
           </p>
         </div>
-        <button className="find-button" onClick={() => setHelp(false)}>
-          Let’s find our spot
+        <button
+          className="find-button"
+          disabled={!network || busy}
+          onClick={() => {
+            setHelp(false);
+            start();
+          }}
+        >
+          Find meeting point
           <ArrowRight size={16} />
         </button>
       </dialog>

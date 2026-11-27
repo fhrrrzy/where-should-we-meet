@@ -25,7 +25,7 @@ npm run preview
 - See per-friend street distances, replay, share the group's starting points by URL, and explore the meeting coordinates in Google Maps.
 - Responsive mobile and desktop layout; reduced-motion support. No backend, tokens, geocoding service, or map API key required.
 
-Names and starting locations are stored only in the current page and in any share URL you create. There is no analytics or account system. Google Fonts may be requested for typography; the app works with system-font fallbacks.
+Names, starting locations, objective and animation mode persist in your browser until Reset and in any share URL you create. Shared links restore the choices and run the search automatically. There is no analytics or account system. Google Fonts may be requested for typography; the app works with system-font fallbacks.
 
 ## Deploy on GitHub Pages
 
@@ -37,9 +37,9 @@ The intended project URL is `https://fhrrrzy.github.io/where-should-we-meet/`. V
 
 ## Distances and coverage
 
-The app runs Dijkstra searches in a web worker over a **bundled, approximate, undirected street graph**, derived from OpenStreetMap geometry in OpenFreeMap / OpenMapTiles zoom-13 vector tiles. It optimizes over connected street junctions, not every possible point, café, or navigable driving route. The graph retains geometry and road lengths while contracting degree-two nodes. Pins snap to the nearest junction in the largest connected component.
+The app runs Dijkstra searches in a web worker over a **bundled, approximate, undirected street graph**, derived from OpenStreetMap geometry in OpenFreeMap / OpenMapTiles zoom-11 vector tiles. This lightweight overview prioritizes major and connecting streets, not every local road. It optimizes over connected street junctions, not every possible point, café, or navigable driving route. The graph retains geometry and road lengths while contracting degree-two nodes. Pins snap to the nearest junction in the largest connected component.
 
-Coverage: 106.72–106.97°E, 6.10–6.36°S. Includes primary, secondary, tertiary, minor, trunk and motorway streets. It excludes private/no-access features, service roads, transit and walking-only paths. Bridge/tunnel/layer geometry is processed separately where tagged, but this is **not a turn-aware routing engine**. Travel times, traffic, one-way restrictions and venue opening hours are not modeled. Confirm an actual journey in your preferred navigation app.
+Coverage: mainland Jakarta within 106.68–106.98°E, 6.08–6.38°S, including Kalideres, Cengkareng, Cilincing and Jagakarsa. Islands are not supported. Includes primary, secondary, tertiary, minor, trunk and motorway features available at this overview zoom; not all local streets are represented. Drops more than 350 m from a mapped street are rejected rather than silently routed across water. It excludes private/no-access features, service roads, transit and walking-only paths. Bridge/tunnel/layer geometry is processed separately where tagged, but this is **not a turn-aware routing engine**. Travel times, traffic, one-way restrictions and venue opening hours are not modeled. Confirm an actual journey in your preferred navigation app.
 
 Both animations use identical shortest-distance results; only the reveal order changes. Street-segment counts come from the actual search distances, not a fixed demo counter. A segment is considered reached when its first endpoint is reached; the wave's resolution is one bundled segment.
 

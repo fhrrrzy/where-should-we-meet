@@ -42,6 +42,16 @@ export const places: Place[] = [
   { name: "Slipi", lat: -6.2024, lng: 106.7991 },
   { name: "Palmerah", lat: -6.207, lng: 106.795 },
   { name: "Manggarai", lat: -6.2099, lng: 106.8502 },
+  { name: "Cilincing", lat: -6.1138, lng: 106.9445 },
+  { name: "Cakung", lat: -6.1855, lng: 106.9415 },
+  { name: "Jagakarsa", lat: -6.3349, lng: 106.8233 },
+  { name: "Kalideres", lat: -6.1392, lng: 106.705 },
+  { name: "Cengkareng", lat: -6.1487, lng: 106.735 },
+  { name: "Kembangan", lat: -6.1907, lng: 106.7383 },
+  { name: "Penjaringan", lat: -6.128, lng: 106.799 },
+  { name: "Marunda", lat: -6.113, lng: 106.963 },
+  { name: "Cipayung", lat: -6.329, lng: 106.902 },
+  { name: "Ciracas", lat: -6.329, lng: 106.872 },
 ];
 export const colors = [
   "#f35aa6",
@@ -51,7 +61,20 @@ export const colors = [
   "#e7bc62",
   "#ba91ff",
 ];
-export type Friend = { id: number; name: string; place: Place };
+export type Friend = { id: number; name: string; place: Place; color?: number };
+export const sameLocation = (friends: Friend[]) =>
+  friends.every(
+    (f) =>
+      f.place.lat === friends[0].place.lat &&
+      f.place.lng === friends[0].place.lng,
+  );
+export const friendLabel = (f: Friend) => f.name.trim() || `Friend ${f.id + 1}`;
+export const friendColorIndex = (f: Friend) => f.color ?? f.id % colors.length;
+export const friendColor = (f: Friend) => colors[friendColorIndex(f)];
+export const friendInitial = (f: Friend) =>
+  /^Friend \d+$/.test(friendLabel(f))
+    ? friendLabel(f).slice(7)
+    : Array.from(friendLabel(f))[0].toUpperCase();
 export const initialFriends = (): Friend[] =>
   ["Budi", "Putri", "Dimas", "Sari"].map((name, id) => ({
     id,
