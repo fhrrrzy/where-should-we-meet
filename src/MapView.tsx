@@ -91,11 +91,8 @@ export default function MapView(props: Props) {
       attributionControl: false,
       minZoom: 9,
       maxZoom: 16,
-      maxBounds: [
-        [-6.42, 106.63],
-        [-6.04, 107.03],
-      ],
-      maxBoundsViscosity: 0.8,
+      // Viewport centering must be free to reserve room for floating controls.
+      // Starting points are independently validated against data coverage.
     });
     map.current = m;
     L.control
