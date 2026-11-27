@@ -13,6 +13,7 @@ import type { Network, SearchResult } from "./graph";
 import { createStreetRenderer } from "./streetRenderer";
 import { locate } from "./geolocate";
 import { insideCoverage } from "./planner";
+import { createSmoothZoom, wheelZoomDelta } from "./smoothZoom";
 
 type Props = {
   network: Network | null;
@@ -30,16 +31,14 @@ type Props = {
 export default function MapView(props: Props) {
   const root = useRef<HTMLDivElement>(null),
     map = useRef<L.Map | null>(null),
+    smoothZoom = useRef<ReturnType<typeof createSmoothZoom> | null>(null),
     canvas = useRef<HTMLCanvasElement | null>(null),
     friendLayer = useRef<L.LayerGroup | null>(null),
     meetingLayer = useRef<L.LayerGroup | null>(null),
     locationLayer = useRef<L.LayerGroup | null>(null),
     latest = useRef(props);
   latest.current = props;
-  const draw = useRef<{
-    draw: () => void;
-    transform: (center: L.LatLng, zoom: number) => void;
-  }>({ draw: () => {}, transform: () => {} });
+  const draw = useRef<{ draw: () => void }>({ draw: () => {} });
   const fit = () => {
     const mobile = window.innerWidth <= 760;
     const phonePortrait = mobile && window.innerHeight > 500;
@@ -106,9 +105,10 @@ export default function MapView(props: Props) {
     const m = L.map(root.current, {
       center: [-6.205, 106.827],
       zoom: 12,
+      zoomAnimation: false,
       zoomSnap: 0,
-      zoomDelta: 1,
-      wheelPxPerZoomLevel: 100,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
       zoomControl: false,
       attributionControl: false,
       minZoom: 9,
@@ -117,6 +117,8 @@ export default function MapView(props: Props) {
       // Starting points are independently validated against data coverage.
     });
     map.current = m;
+    const zoomController = createSmoothZoom(m);
+    smoothZoom.current = zoomController;
     L.control
       .attribution({ prefix: false, position: "bottomright" })
       .addAttribution(
@@ -168,9 +170,37 @@ export default function MapView(props: Props) {
       );
     const renderer = createStreetRenderer(m, c, () => latest.current);
     draw.current = renderer;
-    m.on("moveend zoomend resize", () => renderer.draw());
-    m.on("zoomanim", (event) => renderer.transform(event.center, event.zoom));
-    m.on("zoom", () => renderer.transform(m.getCenter(), m.getZoom()));
+    m.on("zoom moveend zoomend resize", () => renderer.draw());
+    const container = m.getContainer();
+    const mapPane = m.getPane("mapPane")!;
+    const onMap = (target: EventTarget | null) =>
+      target === container ||
+      (target instanceof Node && mapPane.contains(target));
+    const onWheel = (event: WheelEvent) => {
+      if (!onMap(event.target)) return;
+      event.preventDefault();
+      zoomController.zoomBy(
+        wheelZoomDelta(event),
+        m.mouseEventToContainerPoint(event),
+        event.ctrlKey || (event.deltaMode === 0 && Math.abs(event.deltaY) < 40),
+      );
+    };
+    const onDoubleClick = (event: L.LeafletMouseEvent) => {
+      zoomController.zoomBy(
+        event.originalEvent.shiftKey ? -1 : 1,
+        event.containerPoint,
+      );
+    };
+    const stopZoom = (event: Event) => {
+      if (onMap(event.target)) zoomController.stop();
+    };
+    container.addEventListener("wheel", onWheel, { passive: false });
+    container.addEventListener("pointerdown", stopZoom, true);
+    container.addEventListener("touchstart", stopZoom, {
+      capture: true,
+      passive: true,
+    });
+    m.on("dblclick", onDoubleClick);
     m.on("click", (e: L.LeafletMouseEvent) => {
       if (latest.current.active !== null)
         latest.current.onPick(e.latlng.lat, e.latlng.lng);
@@ -229,8 +259,14 @@ export default function MapView(props: Props) {
     fit();
     return () => {
       resize.disconnect();
+      zoomController.stop();
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("pointerdown", stopZoom, true);
+      container.removeEventListener("touchstart", stopZoom, true);
+      m.off("dblclick", onDoubleClick);
       m.remove();
       map.current = null;
+      smoothZoom.current = null;
     };
   }, []);
   useEffect(() => {
@@ -250,7 +286,9 @@ export default function MapView(props: Props) {
     if (!layer) return;
     layer.clearLayers();
     const m = map.current!;
+    let pinZoom = m.getZoom();
     const renderPins = () => {
+      pinZoom = m.getZoom();
       layer.clearLayers();
       props.friends.forEach((f) => {
         const original = L.latLng(f.place.lat, f.place.lng);
@@ -346,9 +384,12 @@ export default function MapView(props: Props) {
       });
     };
     renderPins();
-    m.on("zoomend", renderPins);
+    const onSettled = () => {
+      if (m.getZoom() !== pinZoom) renderPins();
+    };
+    m.on("zoomend moveend", onSettled);
     return () => {
-      m.off("zoomend", renderPins);
+      m.off("zoomend moveend", onSettled);
     };
   }, [props.friends, props.active, props.running, props.result, props.network]);
   useEffect(() => {
@@ -447,10 +488,16 @@ export default function MapView(props: Props) {
           <Maximize2 size={18} />
         </button>
         <div className="zoom-controls">
-          <button onClick={() => map.current?.zoomIn()} aria-label="Zoom in">
+          <button
+            onClick={() => smoothZoom.current?.zoomBy(1)}
+            aria-label="Zoom in"
+          >
             <Plus size={18} />
           </button>
-          <button onClick={() => map.current?.zoomOut()} aria-label="Zoom out">
+          <button
+            onClick={() => smoothZoom.current?.zoomBy(-1)}
+            aria-label="Zoom out"
+          >
             <Minus size={18} />
           </button>
         </div>
