@@ -265,7 +265,11 @@ export default function App() {
             How it works
           </button>
           <span className="nav-divider" />
-          <button className="share-button" onClick={share}>
+          <button
+            className="share-button"
+            onClick={share}
+            aria-label={copied ? "Group link copied" : "Share your group"}
+          >
             {copied ? <Check size={15} /> : <Share2 size={15} />}
             <span>{copied ? "Link copied" : "Share your group"}</span>
           </button>
