@@ -173,13 +173,11 @@ export default function MapView(props: Props) {
     m.on("zoom moveend zoomend resize", () => renderer.draw());
     const container = m.getContainer();
     const mapPane = m.getPane("mapPane")!;
+    const onMap = (target: EventTarget | null) =>
+      target === container ||
+      (target instanceof Node && mapPane.contains(target));
     const onWheel = (event: WheelEvent) => {
-      const target = event.target;
-      if (
-        target !== container &&
-        !(target instanceof Node && mapPane.contains(target))
-      )
-        return;
+      if (!onMap(event.target)) return;
       event.preventDefault();
       zoomController.zoomBy(
         wheelZoomDelta(event),
@@ -193,7 +191,9 @@ export default function MapView(props: Props) {
         event.containerPoint,
       );
     };
-    const stopZoom = () => zoomController.stop();
+    const stopZoom = (event: Event) => {
+      if (onMap(event.target)) zoomController.stop();
+    };
     container.addEventListener("wheel", onWheel, { passive: false });
     container.addEventListener("pointerdown", stopZoom, true);
     container.addEventListener("touchstart", stopZoom, {
